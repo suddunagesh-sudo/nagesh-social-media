@@ -1,4 +1,4 @@
-name: Build APK
+name: Build AAB for Play Store
 on:
   push:
     branches: [ main ]
@@ -9,14 +9,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-      - name: Build Debug APK
-        run: flutter build apk --debug
+      - run: flutter pub get
+      - run: flutter build appbundle --release
       - uses: actions/upload-artifact@v4
         with:
-          name: nagesh-social-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: app-release-aab
+          path: build/app/outputs/bundle/release/app-release.aab
