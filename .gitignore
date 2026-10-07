@@ -12,3 +12,4 @@ my-release-key-base64.txt
 
 .vercel
 .env*
+node_modules
