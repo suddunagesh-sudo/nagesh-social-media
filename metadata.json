@@ -1,0 +1,6 @@
+{
+  "name": "Nagesh Social Media - Lifetime Version",
+  "description": "Facebook-inspired social media platform with stories, feed, real-time posts, comments, dark mode, and monetization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
