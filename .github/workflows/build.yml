@@ -1,4 +1,4 @@
-name: Build AAB for Play Store
+name: start agent build
 on:
   push:
     branches: [ main ]
@@ -9,14 +9,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: 'zulu'
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          flutter-version: '3.22.3'
       - run: flutter pub get
       - run: flutter build appbundle --release
       - uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
-          path: build/app/outputs/bundle/release/app-release.aab
+          path: build/app/outputs/bundle/release/*.aab
