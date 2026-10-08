@@ -32,9 +32,9 @@ Secrets ko workflow YAML ya kisi project file mein na likhein.
 
 ## 4. Workflow chalayein aur AAB download karein
 
-- Workflow `main` ya `master` branch par push se khud chalega. Ya GitHub par **Actions > Build signed Android App Bundle > Run workflow** chunein.
+- Workflow `main` branch par push se khud chalega.
 - Build successful ho jaane par us workflow run ko kholein.
-- **Artifacts** section se `nagesh-socialmedia-release-aab` download karein. ZIP extract karne par `app-release.aab` milega.
+- **Artifacts** section se `app-release-aab` download karein. ZIP extract karne par `app-release.aab` milega.
 - AAB ko Play Console ke testing ya production release mein upload karein.
 
 Workflow Node 20, Java 17 aur Android SDK GitHub runner par setup karke web build, Capacitor copy aur signed `bundleRelease` karta hai. Is process ke liye local Android Studio build ki zaroorat nahi.
