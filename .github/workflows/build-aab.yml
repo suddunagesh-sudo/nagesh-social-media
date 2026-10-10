@@ -2,6 +2,7 @@ name: Build AAB
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,10 +16,20 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.2'
-          channel: 'stable'
-      - run: flutter pub get
-      - run: flutter build appbundle --debug
-      - uses: actions/upload-artifact@v4
+      - name: Decode Keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/app/my-release-key.jks
+      - name: Create key.properties
+        run: |
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" > android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
+          echo "storeFile=my-release-key.jks" >> android/key.properties
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Build AAB
+        run: flutter build appbundle --release
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
         with:
-          name: app-debug-aab
-          path: build/app/outputs/bundle/debug/app-debug.aab
+          name: app-release-aab
+          path: build/app/outputs/bundle/release/app-release.aab
