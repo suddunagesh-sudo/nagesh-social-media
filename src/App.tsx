@@ -39,6 +39,7 @@ import AdminPayouts from './components/AdminPayouts'
 import FeedAd from './components/FeedAd'
 import WithdrawModal from './components/WithdrawModal'
 import Onboarding from './components/Onboarding'
+import SettingsPage from './components/SettingsPage'
 import {
   Bell,
   Bookmark,
@@ -55,6 +56,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Settings as SettingsIcon,
   Send,
   Share2,
   Smile,
@@ -68,7 +70,7 @@ import {
 
 type Post = SocialPost
 
-type Page = 'feed' | 'profile' | 'user-profile' | 'friends' | 'explore' | 'saved' | 'search'
+type Page = 'feed' | 'profile' | 'user-profile' | 'friends' | 'explore' | 'saved' | 'search' | 'settings'
 
 type Story = SupabaseStory
 
@@ -311,7 +313,7 @@ function SocialApp() {
   const [editingPost, setEditingPost] = useState<Post | null>(null)
   const [postContentDraft, setPostContentDraft] = useState('')
   const [savingPost, setSavingPost] = useState(false)
-  const [page, setPage] = useState<Page>('feed')
+  const [page, setPage] = useState<Page>(() => window.location.pathname === '/settings' ? 'settings' : 'feed')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [composerOpen, setComposerOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -329,12 +331,42 @@ function SocialApp() {
   const [signUpName, setSignUpName] = useState('')
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
   const [signingIn, setSigningIn] = useState(false)
+  const [accountEmail, setAccountEmail] = useState('')
   const currentUser = profile.fullName
   const currentUserId = profile.id ?? ''
 
   useEffect(() => {
     void initializeAdMob()
   }, [])
+
+  useEffect(() => {
+    const syncSettingsRoute = () => {
+      setPage(window.location.pathname === '/settings' ? 'settings' : 'feed')
+    }
+    window.addEventListener('popstate', syncSettingsRoute)
+    return () => window.removeEventListener('popstate', syncSettingsRoute)
+  }, [])
+
+  useEffect(() => {
+    if (page === 'settings' && window.location.pathname !== '/settings') {
+      window.history.pushState({}, '', '/settings')
+    } else if (page !== 'settings' && window.location.pathname === '/settings') {
+      window.history.pushState({}, '', '/')
+    }
+  }, [page])
+
+  useEffect(() => {
+    let active = true
+    void supabase.auth.getUser().then(({ data, error }) => {
+      if (error) throw error
+      if (active) setAccountEmail(data.user?.email ?? '')
+    }).catch((error: unknown) => {
+      console.error('Account email could not be loaded:', error)
+    })
+    return () => {
+      active = false
+    }
+  }, [currentUserId])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const postMediaInputRef = useRef<HTMLInputElement>(null)
@@ -582,7 +614,10 @@ function SocialApp() {
         if (active) setUnreadNotificationCount(unreadCount)
       } catch (error) {
         console.error('Notifications could not be loaded:', error)
-        if (active) setNotice(error instanceof Error ? error.message : 'Notifications could not be loaded.')
+        if (active) {
+          setNotifications([])
+          setUnreadNotificationCount(0)
+        }
       } finally {
         if (active) setNotificationsLoading(false)
       }
@@ -859,14 +894,21 @@ function SocialApp() {
           notificationFailed = true
         }
       }
-      setNotice(notificationFailed
-        ? 'Your comment was posted, but the post owner was not notified.'
-        : 'Comment posted.')
+      if (notificationFailed) console.error('Comment was posted, but its owner was not notified.')
     } catch (error) {
       console.error('Comment could not be saved:', error)
-      setNotice(error instanceof Error ? error.message : 'Comment could not be saved.')
     }
-    window.setTimeout(() => setNotice(''), 2500)
+  }
+
+  const saveSettingsName = async (name: string) => {
+    const updatedProfile = { ...profile, fullName: name.trim() }
+    await saveProfileToSupabase(updatedProfile)
+    setProfile(updatedProfile)
+  }
+
+  const changeAccountPassword = async (password: string) => {
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) throw error
   }
 
   const toggleSavedPost = (postId: number | string) => {
@@ -1041,7 +1083,8 @@ function SocialApp() {
       }
     } catch (error) {
       console.error('Notifications could not be refreshed:', error)
-      setNotice(error instanceof Error ? error.message : 'Notifications could not be refreshed.')
+      setNotifications([])
+      setUnreadNotificationCount(0)
     } finally {
       setNotificationsLoading(false)
     }
@@ -1130,6 +1173,7 @@ function SocialApp() {
           <button type="button" onClick={() => { setPage('friends'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'friends' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Users size={18} /> Friends</button>
           <button type="button" onClick={() => { setPage('explore'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'explore' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Compass size={18} /> Explore</button>
           <button type="button" onClick={() => { setPage('saved'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'saved' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Bookmark size={18} /> Saved</button>
+          <button type="button" onClick={() => { setPage('settings'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'settings' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 hover:bg-white'}`}><SettingsIcon size={18} /> Settings</button>
         </nav>
       </aside>
 
@@ -1206,6 +1250,7 @@ function SocialApp() {
             <button type="button" onClick={() => setPage('friends')} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'friends' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Users size={18} /> Friends</button>
             <button type="button" onClick={() => setPage('explore')} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'explore' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Compass size={18} /> Explore</button>
             <button type="button" onClick={() => setPage('saved')} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'saved' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Bookmark size={18} /> Saved</button>
+            <button type="button" onClick={() => setPage('settings')} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'settings' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><SettingsIcon size={18} /> Settings</button>
             <div className="my-5 border-t border-slate-200" />
             <p className="px-3 pb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Your people</p>
             {stories.map((story) => (
@@ -1246,7 +1291,13 @@ function SocialApp() {
               {authMode === 'signin' ? 'New here? Create an account' : 'Already have an account? Sign in'}
             </button>
           </section>}
-          {page === 'user-profile' && viewedProfile ? <section aria-label={`${viewedProfile.fullName} profile`} className="space-y-5">
+          {page === 'settings' ? <SettingsPage
+            profileName={profile.fullName}
+            email={accountEmail}
+            userId={currentUserId}
+            onSaveName={saveSettingsName}
+            onChangePassword={changeAccountPassword}
+          /> : page === 'user-profile' && viewedProfile ? <section aria-label={`${viewedProfile.fullName} profile`} className="space-y-5">
             <button type="button" onClick={() => setPage('search')} className="text-sm font-semibold text-teal-800 hover:underline">← Back to search</button>
             <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5">
               <Avatar name={viewedProfile.fullName} image={viewedProfile.avatarUrl} size="lg" />

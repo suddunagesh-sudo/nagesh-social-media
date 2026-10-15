@@ -170,8 +170,32 @@ export async function fetchPosts(): Promise<SocialPost[]> {
     throw error
   }
   const posts = (data ?? []).map((record) => mapPost(record as Record<string, unknown>))
-  console.log('Posts:', posts)
-  return posts
+  if (posts.length === 0) return posts
+
+  const commentsByPost = new Map<string, string[]>()
+  try {
+    const { data: commentRows, error: commentsError } = await supabase
+      .from('comments')
+      .select('post_id, content')
+      .in('post_id', posts.map((post) => post.id))
+      .order('created_at', { ascending: true })
+    if (commentsError) throw commentsError
+
+    for (const comment of commentRows ?? []) {
+      const postId = String(comment.post_id)
+      const existingComments = commentsByPost.get(postId) ?? []
+      existingComments.push(comment.content)
+      commentsByPost.set(postId, existingComments)
+    }
+  } catch (error) {
+    console.error('Post comments could not be loaded:', error)
+  }
+  const postsWithComments = posts.map((post) => ({
+    ...post,
+    comments: commentsByPost.get(String(post.id)) ?? [],
+  }))
+  console.log('Posts:', postsWithComments)
+  return postsWithComments
 }
 
 export async function fetchStories(): Promise<SupabaseStory[]> {

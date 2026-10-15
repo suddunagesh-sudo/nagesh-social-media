@@ -1,1 +1,33 @@
 @import "tailwindcss";
+
+html.app-dark-mode body {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+html.app-dark-mode #root .bg-white {
+  background-color: #1e293b;
+}
+
+html.app-dark-mode #root .bg-\[\#f4f6f5\] {
+  background-color: #0f172a;
+}
+
+html.app-dark-mode #root .text-slate-900,
+html.app-dark-mode #root .text-slate-800 {
+  color: #e2e8f0;
+}
+
+html.app-dark-mode #root .text-slate-700,
+html.app-dark-mode #root .text-slate-600 {
+  color: #cbd5e1;
+}
+
+html.app-dark-mode #root .border-slate-200,
+html.app-dark-mode #root .border-slate-100 {
+  border-color: #334155;
+}
+
+html.app-dark-mode #root .bg-slate-100 {
+  background-color: #334155;
+}
