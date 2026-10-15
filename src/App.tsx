@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import {
+  addCommentToPost,
   createPost,
+  createNotification,
   createStory,
   fetchAccountWallet,
   fetchCurrentUserLikes,
+  fetchNotifications,
   fetchPayoutHistory,
   fetchPosts,
   fetchProfiles,
   fetchReferralCount,
   fetchStories,
+  incrementPostShareCount,
+  incrementPostViews,
+  markNotificationsRead,
+  fetchUnreadNotificationCount,
   saveProfile as saveProfileToSupabase,
+  searchProfilesByName,
   setPostLiked,
   supabase,
   supabaseConfigured,
@@ -21,6 +29,7 @@ import {
   type AccountWallet,
   type PayoutRequest,
   type SocialPost,
+  type SocialNotification,
   type SupabaseStory,
 } from './lib/supabase'
 import { initializeAdMob } from './ads'
@@ -29,6 +38,7 @@ import AdEarn from './components/AdEarn'
 import AdminPayouts from './components/AdminPayouts'
 import FeedAd from './components/FeedAd'
 import WithdrawModal from './components/WithdrawModal'
+import Onboarding from './components/Onboarding'
 import {
   Bell,
   Bookmark,
@@ -36,7 +46,6 @@ import {
   Copy,
   Compass,
   CreditCard,
-  Flag,
   Heart,
   Home,
   ImagePlus,
@@ -59,7 +68,7 @@ import {
 
 type Post = SocialPost
 
-type Page = 'feed' | 'profile' | 'friends' | 'explore' | 'saved'
+type Page = 'feed' | 'profile' | 'user-profile' | 'friends' | 'explore' | 'saved' | 'search'
 
 type Story = SupabaseStory
 
@@ -127,12 +136,12 @@ function PostCard({
   post,
   currentUserName,
   isLiked,
+  isLikePending,
   isSaved,
   onView,
   onDelete,
   onEdit,
   onCopyLink,
-  onReport,
   onLike,
   onSave,
   onComment,
@@ -143,12 +152,12 @@ function PostCard({
   currentUserName: string
   currentUserId: string
   isLiked: boolean
+  isLikePending: boolean
   isSaved: boolean
   onView: (postId: number | string) => void
   onDelete: (postId: number | string) => void
   onEdit: (post: Post) => void
   onCopyLink: (post: Post) => void
-  onReport: (post: Post) => void
   onLike: (postId: number | string) => void
   onSave: (postId: number | string) => void
   onComment: (postId: number | string, comment: string) => void
@@ -226,19 +235,12 @@ function PostCard({
           </div>
         </div>
         <div ref={menuRef} className="relative flex items-center gap-1">
-          {isOwnPost && (
-            <button type="button" onClick={() => onDelete(post.id)} className="flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-700" aria-label="Delete your post" title="Delete post">
-              <Trash2 size={15} /> <span className="hidden sm:inline">Delete</span>
-            </button>
-          )}
           <button type="button" onClick={() => setOptionsOpen((open) => !open)} className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100" aria-label="More post options" aria-expanded={optionsOpen} aria-haspopup="menu"><MoreHorizontal size={20} /></button>
           {optionsOpen && (
             <div role="menu" aria-label="Post options" className="absolute right-0 top-10 z-20 min-w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
-              {isOwnPost && <button type="button" role="menuitem" onClick={() => chooseOption(() => onEdit(post))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"><Pencil size={16} /> Edit Post</button>}
               <button type="button" role="menuitem" onClick={() => chooseOption(() => onCopyLink(post))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"><Copy size={16} /> Copy Link</button>
-              {isOwnPost
-                ? <button type="button" role="menuitem" onClick={() => chooseOption(() => onDelete(post.id))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50"><Trash2 size={16} /> Delete</button>
-                : <button type="button" role="menuitem" onClick={() => chooseOption(() => onReport(post))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"><Flag size={16} /> Report</button>}
+              <button type="button" role="menuitem" disabled={!isOwnPost} onClick={() => chooseOption(() => onEdit(post))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"><Pencil size={16} /> Edit Post</button>
+              <button type="button" role="menuitem" disabled={!isOwnPost} onClick={() => chooseOption(() => onDelete(post.id))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45"><Trash2 size={16} /> Delete</button>
             </div>
           )}
         </div>
@@ -259,7 +261,7 @@ function PostCard({
         <span>{post.comments?.length ? `${post.comments.length} comments` : 'No comments yet'}</span>
       </div>
       <div className="grid grid-cols-4 gap-1 px-3 py-2">
-        <button type="button" onClick={() => onLike(post.id)} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 ${isLiked ? 'text-rose-600' : 'text-slate-600'}`}><Heart size={17} fill={isLiked ? 'currentColor' : 'none'} /> Like</button>
+        <button type="button" onClick={() => onLike(post.id)} disabled={isLikePending} aria-pressed={isLiked} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70 ${isLiked ? 'text-sky-600' : 'text-slate-600'}`}><ThumbsUp size={17} fill={isLiked ? 'currentColor' : 'none'} /> Like</button>
         <button type="button" onClick={() => document.getElementById(`comment-${post.id}`)?.focus()} className="flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold text-slate-600 transition hover:bg-slate-50"><MessageCircle size={17} /> Comment</button>
         <button type="button" onClick={() => onShare(post)} className="flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold text-slate-600 transition hover:bg-slate-50"><Share2 size={17} /> Share</button>
         <button type="button" onClick={() => onSave(post.id)} aria-label={isSaved ? 'Remove saved post' : 'Save post'} title={isSaved ? 'Remove saved post' : 'Save post'} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 ${isSaved ? 'text-teal-700' : 'text-slate-600'}`}><Bookmark size={17} fill={isSaved ? 'currentColor' : 'none'} /><span className="hidden sm:inline">Save</span></button>
@@ -296,6 +298,7 @@ function SocialApp() {
   const [photoPreview, setPhotoPreview] = useState('')
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [likedPosts, setLikedPosts] = useState<(number | string)[]>([])
+  const [pendingLikePosts, setPendingLikePosts] = useState<(number | string)[]>([])
   const [activeStory, setActiveStory] = useState<Story | null>(null)
   const [myStoryImage, setMyStoryImage] = useState<string | null>(null)
   const [uploadingStory, setUploadingStory] = useState(false)
@@ -309,6 +312,17 @@ function SocialApp() {
   const [postContentDraft, setPostContentDraft] = useState('')
   const [savingPost, setSavingPost] = useState(false)
   const [page, setPage] = useState<Page>('feed')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Profile[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState('')
+  const [viewedProfile, setViewedProfile] = useState<Profile | null>(null)
+  const [notifications, setNotifications] = useState<SocialNotification[]>([])
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [notice, setNotice] = useState('')
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
@@ -326,6 +340,7 @@ function SocialApp() {
   const postMediaInputRef = useRef<HTMLInputElement>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const postOwnersRef = useRef(new Map(posts.map((post) => [post.id, post.user])))
+  const pendingLikePostIdsRef = useRef(new Set<number | string>())
   const userTotalViews = posts
     .filter((post) => post.user_id === currentUserId)
     .reduce((total, post) => total + post.views, 0)
@@ -351,6 +366,21 @@ function SocialApp() {
       console.error('Sign-in failed:', error)
       setNotice(error instanceof Error ? error.message : 'Sign-in failed.')
     } finally {
+      setSigningIn(false)
+    }
+  }
+
+  const signInWithGoogle = async () => {
+    setSigningIn(true)
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: `${window.location.origin}/` },
+      })
+      if (error) throw error
+    } catch (error) {
+      console.error('Google Login Error:', error instanceof Error ? error.message : error)
+      setNotice(error instanceof Error ? error.message : 'Google sign-in could not be started.')
       setSigningIn(false)
     }
   }
@@ -534,6 +564,73 @@ function SocialApp() {
   }, [currentUserId])
 
   useEffect(() => {
+    if (!currentUserId || !supabaseConfigured) {
+      setNotifications([])
+      setUnreadNotificationCount(0)
+      return
+    }
+
+    let active = true
+    const loadNotifications = async () => {
+      setNotificationsLoading(true)
+      try {
+        const [loadedNotifications, unreadCount] = await Promise.all([
+          fetchNotifications(currentUserId),
+          fetchUnreadNotificationCount(currentUserId),
+        ])
+        if (active) setNotifications(loadedNotifications)
+        if (active) setUnreadNotificationCount(unreadCount)
+      } catch (error) {
+        console.error('Notifications could not be loaded:', error)
+        if (active) setNotice(error instanceof Error ? error.message : 'Notifications could not be loaded.')
+      } finally {
+        if (active) setNotificationsLoading(false)
+      }
+    }
+
+    void loadNotifications()
+    return () => {
+      active = false
+    }
+  }, [currentUserId])
+
+  useEffect(() => {
+    if (searchQuery.trim().length < 2) {
+      setSearchResults([])
+      setSearchError('')
+      setSearchLoading(false)
+      return
+    }
+
+    let active = true
+    const runSearch = async () => {
+      setSearchLoading(true)
+      setSearchError('')
+      try {
+        const results = await searchProfilesByName(searchQuery)
+        if (active) setSearchResults(results)
+      } catch (error) {
+        console.error('Profile search failed:', error)
+        if (active) {
+          setSearchResults([])
+          setSearchError(error instanceof Error ? error.message : 'Profile search failed.')
+        }
+      } finally {
+        if (active) setSearchLoading(false)
+      }
+    }
+
+    const timeout = window.setTimeout(() => {
+      void runSearch()
+    }, 250)
+
+    return () => {
+      active = false
+      window.clearTimeout(timeout)
+    }
+  }, [searchQuery])
+
+  useEffect(() => {
     window.localStorage.setItem(SAVED_POSTS_STORAGE_KEY, JSON.stringify(savedPostIds))
   }, [savedPostIds])
 
@@ -554,8 +651,13 @@ function SocialApp() {
     }
   }, [currentUserId, refreshAccountData])
 
-  const handleView = useCallback((postId: number | string) => {
+  const handleView = useCallback(async (postId: number | string) => {
     setPosts((currentPosts) => currentPosts.map((post) => post.id === postId ? { ...post, views: post.views + 1 } : post))
+    try {
+      await incrementPostViews(postId)
+    } catch (error) {
+      console.error('Post view could not be recorded:', error)
+    }
   }, [])
 
   const addPost = async (event: FormEvent<HTMLFormElement>) => {
@@ -575,23 +677,28 @@ function SocialApp() {
       if (!authData.user) throw new Error('Sign in to publish a post.')
 
       if (sourcePhoto && !supabaseConfigured) {
-        throw new Error('Supabase is not configured; photo posts cannot be saved remotely.')
+        throw new Error('Supabase is not configured; media posts cannot be saved remotely.')
       }
 
       let imageUrl: string | null = null
+      let videoUrl: string | null = null
       if (sourcePhoto) {
-        const compressedPhoto = await compressPhoto(sourcePhoto)
-        if (!compressedPhoto) throw new Error('Could not process the selected photo.')
-        imageUrl = await uploadPostPhoto(compressedPhoto)
+        const isVideo = sourcePhoto.type.startsWith('video/')
+        const mediaFile = isVideo ? sourcePhoto : await compressPhoto(sourcePhoto)
+        if (!mediaFile) throw new Error('Could not process the selected media.')
+        if (isVideo) {
+          videoUrl = await uploadPostPhoto(mediaFile)
+        } else {
+          imageUrl = await uploadPostPhoto(mediaFile)
+        }
       }
 
       if (!supabaseConfigured) {
         throw new Error('Supabase is not configured; posts cannot be published.')
       }
-      await createPost(trimmedText, imageUrl)
+      await createPost(trimmedText, imageUrl, sourcePhoto?.type.startsWith('video/') ? 'video' : 'image', videoUrl)
       const refreshedPosts = await fetchPosts()
       setPosts(refreshedPosts)
-      console.log('Posts:', refreshedPosts)
       setNotice('Your post is live.')
     } catch (error) {
       console.error('Post could not be saved:', error)
@@ -602,11 +709,27 @@ function SocialApp() {
     }
   }
 
-  const deletePost = (id: number | string) => {
+  const deletePost = async (id: number | string) => {
     if (!window.confirm('Are you sure you want to delete this post?')) return
-    const remainingPosts = posts.filter((post) => post.id !== id)
-    postOwnersRef.current.delete(id)
-    setPosts(remainingPosts)
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', currentUserId)
+        .select('id')
+        .maybeSingle()
+      if (error) throw error
+      if (!data) throw new Error('Only the post owner can delete this post.')
+      const remainingPosts = posts.filter((post) => post.id !== id)
+      postOwnersRef.current.delete(id)
+      setPosts(remainingPosts)
+      setNotice('Post deleted.')
+    } catch (error) {
+      console.error('Post could not be deleted:', error)
+      setNotice(error instanceof Error ? error.message : 'Post could not be deleted.')
+    }
+    window.setTimeout(() => setNotice(''), 3000)
   }
 
   const openPostEditor = (post: Post) => {
@@ -643,21 +766,14 @@ function SocialApp() {
 
   const copyPostLink = async (post: Post) => {
     try {
-      const postUrl = new URL(window.location.href)
-      postUrl.hash = `post-${post.id}`
+      const postUrl = `${window.location.origin}/post/${post.id}`
       await navigator.clipboard.writeText(postUrl.toString())
-      setNotice('Link copied!')
+      setNotice('Link copied')
     } catch (error) {
       console.error('Post link could not be copied:', error)
       setNotice('Could not copy the post link in this browser.')
     }
     window.setTimeout(() => setNotice(''), 3000)
-  }
-
-  const reportPost = (post: Post) => {
-    console.info('Post report requested:', post.id)
-    setNotice('Reported - thanks!')
-    window.setTimeout(() => setNotice(''), 3500)
   }
 
   const copyReferralLink = async () => {
@@ -683,31 +799,74 @@ function SocialApp() {
 
     const alreadyLiked = likedPosts.includes(id)
     const post = posts.find((candidate) => candidate.id === id)
-    if (!post) return
+    if (!post || pendingLikePostIdsRef.current.has(id)) return
 
     const nextLikes = Math.max(0, post.likes + (alreadyLiked ? -1 : 1))
-    try {
-      await setPostLiked(id, alreadyLiked)
-    } catch (error) {
-      console.error('Your like could not be saved to the likes table:', error)
-      setNotice(error instanceof Error
-        ? `Your like could not be saved: ${error.message}`
-        : 'Your like could not be saved. Check the likes-table relationship and RLS policies.')
-      return
-    }
-
+    pendingLikePostIdsRef.current.add(id)
+    setPendingLikePosts((pending) => [...pending, id])
     setLikedPosts((currentLikes) => alreadyLiked
       ? currentLikes.filter((likedId) => likedId !== id)
       : [...currentLikes, id])
-    setPosts((currentPosts) => currentPosts.map((post) => post.id === id
-      ? { ...post, likes: Math.max(0, nextLikes) }
-      : post))
+    setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
+      ? { ...currentPost, likes: nextLikes }
+      : currentPost))
+
+    try {
+      await setPostLiked(id, alreadyLiked)
+      if (!alreadyLiked && post.user_id) {
+        try {
+          await createNotification({ recipientId: post.user_id, postId: id, type: 'like' })
+        } catch (notificationError) {
+          console.error('Like notification could not be saved:', notificationError)
+          setNotice('Your like was saved, but the post owner was not notified.')
+        }
+      }
+    } catch (error) {
+      console.error('Your like could not be saved to the likes table:', error)
+      setLikedPosts((currentLikes) => alreadyLiked
+        ? [...currentLikes, id]
+        : currentLikes.filter((likedId) => likedId !== id))
+      setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
+        ? { ...currentPost, likes: post.likes }
+        : currentPost))
+      setNotice(error instanceof Error
+        ? error.message
+        : 'Sign in to like posts. If you are signed in, apply the likes database migration.')
+    } finally {
+      pendingLikePostIdsRef.current.delete(id)
+      setPendingLikePosts((pending) => pending.filter((pendingId) => pendingId !== id))
+    }
   }
 
-  const addComment = (postId: number | string, comment: string) => {
-    setPosts((currentPosts) => currentPosts.map((post) => post.id === postId
-      ? { ...post, comments: [...(post.comments ?? []), comment] }
-      : post))
+  const addComment = async (postId: number | string, comment: string) => {
+    try {
+      await addCommentToPost(postId, comment)
+      setPosts((currentPosts) => currentPosts.map((post) => post.id === postId
+        ? { ...post, comments: [...(post.comments ?? []), comment] }
+        : post))
+      const post = posts.find((currentPost) => currentPost.id === postId)
+      let notificationFailed = false
+      if (post?.user_id) {
+        try {
+          await createNotification({
+            recipientId: post.user_id,
+            postId,
+            type: 'comment',
+            content: comment,
+          })
+        } catch (notificationError) {
+          console.error('Comment notification could not be saved:', notificationError)
+          notificationFailed = true
+        }
+      }
+      setNotice(notificationFailed
+        ? 'Your comment was posted, but the post owner was not notified.'
+        : 'Comment posted.')
+    } catch (error) {
+      console.error('Comment could not be saved:', error)
+      setNotice(error instanceof Error ? error.message : 'Comment could not be saved.')
+    }
+    window.setTimeout(() => setNotice(''), 2500)
   }
 
   const toggleSavedPost = (postId: number | string) => {
@@ -720,12 +879,14 @@ function SocialApp() {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setNotice('Choose an image file.')
+    const isVideo = file.type.startsWith('video/')
+    const isImage = file.type.startsWith('image/')
+    if (!isImage && !isVideo) {
+      setNotice('Choose an image or video file.')
       return
     }
-    if (file.size > 2 * 1024 * 1024) {
-      setNotice('Choose an image under 2 MB.')
+    if (file.size > (isVideo ? 25 : 2) * 1024 * 1024) {
+      setNotice(isVideo ? 'Choose a video under 25 MB.' : 'Choose an image under 2 MB.')
       return
     }
     setSelectedPhoto(file)
@@ -827,14 +988,81 @@ function SocialApp() {
   }
 
   const sharePost = async (post: Post) => {
+    const shareUrl = new URL(`/post/${encodeURIComponent(post.id)}`, window.location.origin).toString()
     try {
-      await navigator.clipboard.writeText(`${post.user}: ${post.text}`)
-      setNotice('Post copied to clipboard.')
-    } catch {
-      setNotice('Sharing is not available in this browser.')
+      if (navigator.share) {
+        await navigator.share({
+          title: `${post.user} on Nagesh Social`,
+          text: post.text,
+          url: shareUrl,
+        })
+        setNotice('Post shared.')
+      } else {
+        await navigator.clipboard.writeText(shareUrl)
+        setNotice('Post link copied to clipboard.')
+      }
+      try {
+        await incrementPostShareCount(post.id)
+        setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === post.id
+          ? { ...currentPost, shareCount: currentPost.shareCount + 1 }
+          : currentPost))
+      } catch (countError) {
+        console.error('Post share count could not be updated:', countError)
+        setNotice('Post shared, but its share count could not be updated.')
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setNotice('Share cancelled.')
+      } else {
+        console.error('Post sharing failed:', error)
+        setNotice('Sharing is not available in this browser.')
+      }
     }
     window.setTimeout(() => setNotice(''), 2400)
   }
+
+  const toggleNotifications = async () => {
+    const opening = !notificationsOpen
+    setNotificationsOpen(opening)
+    if (!opening || !currentUserId || !supabaseConfigured) return
+
+    setNotificationsLoading(true)
+    try {
+      const [latestNotifications, unreadCount] = await Promise.all([
+        fetchNotifications(currentUserId),
+        fetchUnreadNotificationCount(currentUserId),
+      ])
+      setNotifications(latestNotifications)
+      setUnreadNotificationCount(unreadCount)
+      if (unreadCount > 0) {
+        await markNotificationsRead(currentUserId)
+        setNotifications(latestNotifications.map((notification) => ({ ...notification, isRead: true })))
+        setUnreadNotificationCount(0)
+      }
+    } catch (error) {
+      console.error('Notifications could not be refreshed:', error)
+      setNotice(error instanceof Error ? error.message : 'Notifications could not be refreshed.')
+    } finally {
+      setNotificationsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    const postPathMatch = window.location.pathname.match(/^\/post\/([^/]+)\/?$/)
+    if (!postPathMatch) return
+
+    const postId = decodeURIComponent(postPathMatch[1])
+    setPage('feed')
+    if (posts.length === 0) return
+    const targetPost = posts.find((post) => String(post.id) === postId)
+    if (targetPost) {
+      window.setTimeout(() => {
+        document.getElementById(`post-${targetPost.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 0)
+    } else {
+      setNotice('This post is no longer available.')
+    }
+  }, [posts])
 
   const friends = new Map<string, Profile>()
   for (const publicProfile of directoryProfiles) friends.set(publicProfile.fullName, publicProfile)
@@ -862,12 +1090,12 @@ function SocialApp() {
           currentUserName={currentUser}
           currentUserId={currentUserId}
           isLiked={likedPosts.includes(post.id)}
+          isLikePending={pendingLikePosts.includes(post.id)}
           isSaved={savedPostIds.includes(post.id)}
           onView={handleView}
           onDelete={deletePost}
           onEdit={openPostEditor}
           onCopyLink={(selectedPost) => void copyPostLink(selectedPost)}
-          onReport={reportPost}
           onLike={toggleLike}
           onSave={toggleSavedPost}
           onComment={addComment}
@@ -887,21 +1115,80 @@ function SocialApp() {
 
   return (
     <div className="min-h-screen bg-[#f4f6f5] text-slate-800">
+      {sidebarOpen && <button type="button" aria-label="Close sidebar overlay" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-slate-950/20 lg:hidden" />}
+      <aside className={`fixed left-0 top-0 z-40 h-full w-[260px] transform border-r border-slate-200 bg-white p-4 shadow-xl transition-transform duration-200 lg:hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="mb-5 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-700 text-white"><Sparkles size={18} /></span>
+            <span className="font-bold text-slate-900">nagesh<span className="text-teal-700">.</span>social</span>
+          </div>
+          <button type="button" onClick={() => setSidebarOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100" aria-label="Close menu"><X size={18} /></button>
+        </div>
+        <nav className="space-y-1" aria-label="Mobile navigation">
+          <button type="button" onClick={() => { setPage('feed'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-bold ${page === 'feed' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 hover:bg-white'}`}><Home size={18} /> Home</button>
+          <button type="button" onClick={() => { setPage('profile'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-bold ${page === 'profile' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 hover:bg-white'}`}><Wallet size={18} /> My wallet</button>
+          <button type="button" onClick={() => { setPage('friends'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'friends' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Users size={18} /> Friends</button>
+          <button type="button" onClick={() => { setPage('explore'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'explore' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Compass size={18} /> Explore</button>
+          <button type="button" onClick={() => { setPage('saved'); setSidebarOpen(false) }} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'saved' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><Bookmark size={18} /> Saved</button>
+        </nav>
+      </aside>
+
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-[68px] max-w-[1440px] items-center justify-between gap-5 px-4 sm:px-7">
-          <button type="button" onClick={() => setPage('feed')} className="flex shrink-0 items-center gap-2.5" aria-label="Nagesh Social home">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-700 text-white"><Sparkles size={21} /></span>
-            <span className="font-bold tracking-tight text-slate-900">nagesh<span className="text-teal-700">.</span><span className="hidden text-slate-500 sm:inline">social</span></span>
-          </button>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => setSidebarOpen(true)} className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200 lg:hidden" aria-label="Open menu"><span className="flex flex-col gap-1.5"><span className="block h-0.5 w-4 rounded-full bg-current" /><span className="block h-0.5 w-4 rounded-full bg-current" /><span className="block h-0.5 w-4 rounded-full bg-current" /></span></button>
+            <button type="button" onClick={() => setPage('feed')} className="flex shrink-0 items-center gap-2.5" aria-label="Nagesh Social home">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-700 text-white"><Sparkles size={21} /></span>
+              <span className="font-bold tracking-tight text-slate-900">nagesh<span className="text-teal-700">.</span><span className="hidden text-slate-500 sm:inline">social</span></span>
+            </button>
+          </div>
 
-          <label className="hidden h-10 w-full max-w-[360px] items-center gap-2.5 rounded-full bg-slate-100 px-4 text-slate-400 md:flex">
+          <div className="relative hidden h-10 w-full max-w-[360px] items-center gap-2.5 rounded-full bg-slate-100 px-4 text-slate-400 md:flex">
             <Search size={17} />
-            <input className="w-full bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400" placeholder="Search people and posts" aria-label="Search people and posts" />
-          </label>
+            <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { setPage('search'); } }} className="w-full bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400" placeholder="Search people and posts" aria-label="Search people and posts" />
+            {searchLoading && <span className="text-[11px] font-semibold text-teal-700">Searching…</span>}
+            {searchResults.length > 0 && (
+              <div className="absolute left-0 right-0 top-[calc(100%+8px)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                {searchResults.slice(0, 5).map((result) => (
+                  <button key={result.id ?? result.fullName} type="button" onClick={() => { setViewedProfile(result); setPage('user-profile'); }} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50">
+                    <Avatar name={result.fullName} image={result.avatarUrl} size="sm" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-800">{result.fullName}</span>
+                      <span className="block text-[11px] text-slate-500">{result.username ? `@${result.username}` : 'Profile'}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <button type="button" className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-teal-50 hover:text-teal-800 md:hidden" aria-label="Search"><Search size={18} /></button>
-            <button type="button" className="relative flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-teal-50 hover:text-teal-800" aria-label="Notifications"><Bell size={18} /><span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-orange-500 ring-2 ring-white" /></button>
+            <button type="button" onClick={() => setComposerOpen(true)} className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-700 text-white shadow-sm transition hover:bg-teal-800" aria-label="Create a post"><Plus size={18} /></button>
+            <button type="button" onClick={() => setPage('search')} className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-teal-50 hover:text-teal-800 md:hidden" aria-label="Search"><Search size={18} /></button>
+            <div className="relative">
+              <button type="button" onClick={() => void toggleNotifications()} className="relative flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-teal-50 hover:text-teal-800" aria-label="Notifications" aria-expanded={notificationsOpen}><Bell size={18} />{unreadNotificationCount > 0 && <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">{unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}</span>}</button>
+              {notificationsOpen && <div className="absolute right-0 top-12 z-40 w-[min(90vw,360px)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                <div className="border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-900">Notifications</div>
+                <div className="max-h-96 overflow-y-auto">
+                  {notificationsLoading ? <p className="p-4 text-sm text-slate-500">Loading notifications…</p> : notifications.length ? notifications.map((notification) => (
+                    <button key={notification.id} type="button" onClick={() => {
+                      setNotificationsOpen(false)
+                      if (notification.postId !== null) {
+                        setPage('feed')
+                        window.setTimeout(() => document.getElementById(`post-${notification.postId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0)
+                      }
+                    }} className={`flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 ${notification.isRead ? '' : 'bg-teal-50/70'}`}>
+                      <Avatar name={notification.actorName} image={notification.actorAvatar} size="sm" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm text-slate-800"><strong>{notification.actorName}</strong> {notification.type === 'like' ? 'liked your post.' : 'commented on your post.'}</span>
+                        {notification.content && <span className="block truncate text-xs text-slate-500">{notification.content}</span>}
+                        <span className="mt-0.5 block text-[11px] text-slate-400">{new Date(notification.createdAt).toLocaleString()}</span>
+                      </span>
+                    </button>
+                  )) : <p className="p-4 text-sm text-slate-500">No notifications yet.</p>}
+                </div>
+              </div>}
+            </div>
             <button type="button" onClick={() => setPage('profile')} className="flex h-10 items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 text-teal-900 transition hover:bg-teal-100" aria-label={`Wallet: ₹${accountWallet.balance.toFixed(2)}, ${accountWallet.bluePoints} Blue Points`}>
               <Wallet size={17} /> <span className="text-xs font-bold">₹{accountWallet.balance.toFixed(2)}</span><span className="hidden text-[11px] font-semibold text-teal-700 sm:inline">💙 {accountWallet.bluePoints.toLocaleString()}</span>
             </button>
@@ -941,11 +1228,52 @@ function SocialApp() {
                 <button type="submit" disabled={signingIn} className="h-10 rounded-lg bg-teal-700 px-4 text-sm font-bold text-white disabled:opacity-50">{signingIn ? 'Please wait...' : authMode === 'signin' ? 'Sign in' : 'Create account'}</button>
               </div>
             </form>
+            <button
+              type="button"
+              onClick={() => void signInWithGoogle()}
+              disabled={signingIn}
+              className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white py-2.5 text-sm font-medium text-black transition hover:bg-gray-50 disabled:cursor-wait disabled:opacity-60"
+            >
+              <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.3-5.7 7.5-11.3 7.5-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l6-6C34.5 5.1 29.5 3 24 3 12.3 3 3 12.3 3 24s9.3 21 21 21c10.5 0 20.5-7.5 20.5-21 0-1.4-.1-2.7-.3-3.5z" />
+                <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16.1 18.8 13 24 13c3.1 0 5.9 1.2 8 3.1l6-6C34.5 5.1 29.5 3 24 3 16.3 3 9.6 7.2 6.3 14.7z" />
+                <path fill="#4CAF50" d="M24 43c5.4 0 10.3-1.9 14-5l-6.6-4.8C29.5 34.9 26.9 36 24 36c-5.3 0-9.7-3.2-11.3-7.5l-6.6 5.1C9.4 40.8 16.2 45 24 45z" />
+                <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.7 1.9-1.9 3.6-3.5 4.9l.1.1 6.6 4.8c-.5.5 7.3-5.3 7.3-17.3 0-1.4-.1-2.7-.2-3.5z" />
+              </svg>
+              Continue with Google
+            </button>
             <button type="button" onClick={() => setAuthMode((mode) => mode === 'signin' ? 'signup' : 'signin')} className="mt-3 text-sm font-semibold text-teal-800 hover:underline">
               {authMode === 'signin' ? 'New here? Create an account' : 'Already have an account? Sign in'}
             </button>
           </section>}
-          {page === 'feed' ? <>
+          {page === 'user-profile' && viewedProfile ? <section aria-label={`${viewedProfile.fullName} profile`} className="space-y-5">
+            <button type="button" onClick={() => setPage('search')} className="text-sm font-semibold text-teal-800 hover:underline">← Back to search</button>
+            <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+              <Avatar name={viewedProfile.fullName} image={viewedProfile.avatarUrl} size="lg" />
+              <div className="min-w-0">
+                <h1 className="truncate text-xl font-bold text-slate-900">{viewedProfile.fullName}</h1>
+                {viewedProfile.username && <p className="text-sm text-slate-500">@{viewedProfile.username}</p>}
+                <p className="mt-1 text-sm text-slate-600">{viewedProfile.bio || 'Nagesh Social member'}</p>
+              </div>
+            </div>
+            <h2 className="text-lg font-bold text-slate-900">Posts</h2>
+            <div className="space-y-4">{renderPosts(posts.filter((post) => post.user_id === viewedProfile.id), 'No posts yet', 'This profile has not shared any posts.')}</div>
+          </section> : page === 'search' ? <section aria-label="Search results" className="space-y-5">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_3px_16px_rgba(31,41,55,0.035)] sm:p-5">
+              <div className="flex items-center gap-3 rounded-full bg-slate-100 px-4 py-2.5">
+                <Search size={16} className="text-slate-500" />
+                <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search for people" className="w-full bg-transparent text-sm text-slate-800 outline-none" aria-label="Search for people" />
+              </div>
+              <div className="mt-4 space-y-3">
+                {searchLoading ? <p className="text-sm text-slate-500">Searching…</p> : searchError ? <p role="alert" className="text-sm text-rose-700">{searchError}</p> : searchResults.length ? searchResults.map((result) => (
+                  <button key={result.id ?? result.fullName} type="button" onClick={() => { setViewedProfile(result); setPage('user-profile'); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 px-3 py-2.5 text-left hover:bg-slate-50">
+                    <Avatar name={result.fullName} image={result.avatarUrl} size="sm" />
+                    <span className="min-w-0"><span className="block text-sm font-semibold text-slate-800">{result.fullName}</span><span className="block text-xs text-slate-500">{result.username ? `@${result.username}` : 'Profile'}</span></span>
+                  </button>
+                )) : <p className="text-sm text-slate-500">No people matched “{searchQuery || 'your search'}”.</p>}
+              </div>
+            </div>
+          </section> : page === 'feed' ? <>
           <section aria-label="Stories" className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_3px_16px_rgba(31,41,55,0.035)] sm:p-5">
             <div className="mb-4 flex items-center justify-between">
               <div><h1 className="text-base font-bold text-slate-900">Stories</h1><p className="mt-0.5 text-xs text-slate-500">A glimpse into their day</p></div>
@@ -1124,14 +1452,45 @@ function SocialApp() {
       {activeStory && (
         <div role="dialog" aria-modal="true" aria-label={`${activeStory.name}'s story`} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4" onClick={() => setActiveStory(null)}>
           <div className="relative h-[min(78vh,680px)] w-full max-w-[390px] overflow-hidden rounded-2xl bg-slate-800" onClick={(event) => event.stopPropagation()}>
-            {activeStory.mediaType === 'video'
-              ? <video src={activeStory.image} autoPlay controls playsInline className="h-full w-full object-contain" />
-              : <img src={activeStory.image} alt={`${activeStory.name}'s story`} className="h-full w-full object-cover" />}
-            <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent p-4">
+            <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent p-4">
               <div className="flex items-center gap-2.5"><Avatar name={activeStory.name} size="sm" /><span className="text-sm font-bold text-white">{activeStory.name}</span><span className="text-xs text-white/75">2h</span></div>
               <button type="button" onClick={() => setActiveStory(null)} className="flex h-9 w-9 items-center justify-center rounded-full bg-black/25 text-white" aria-label="Close story"><X size={20} /></button>
             </div>
+            <div className="absolute inset-x-4 top-4 z-10 flex gap-1.5">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <span key={`${activeStory.id}-progress-${index}`} className={`h-1 flex-1 rounded-full ${index === 0 ? 'bg-white/95' : 'bg-white/30'}`} />
+              ))}
+            </div>
+            {activeStory.mediaType === 'video'
+              ? <video src={activeStory.image} autoPlay controls playsInline className="h-full w-full object-contain" />
+              : <img src={activeStory.image} alt={`${activeStory.name}'s story`} className="h-full w-full object-cover" />}
           </div>
+        </div>
+      )}
+
+      {composerOpen && (
+        <div role="dialog" aria-modal="true" aria-label="Create a post" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={() => setComposerOpen(false)}>
+          <form onSubmit={(event) => { void addPost(event); setComposerOpen(false) }} onClick={(event) => event.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-900">Create</h2>
+              <button type="button" onClick={() => setComposerOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100" aria-label="Close create dialog"><X size={19} /></button>
+            </div>
+            <div className="mb-4 flex items-center gap-3">
+              <Avatar name={profile.fullName} image={profile.avatarUrl} />
+              <div>
+                <p className="text-sm font-bold text-slate-900">{profile.fullName || 'New post'}</p>
+                <p className="text-xs text-slate-500">Share a moment with your network</p>
+              </div>
+            </div>
+            <textarea value={text} onChange={(event) => setText(event.target.value)} rows={5} placeholder="What’s happening today?" className="w-full resize-y rounded-xl border border-slate-200 p-3 text-sm text-slate-800 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" />
+            {photoPreview && <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-2"><img src={photoPreview} alt="Selected media preview" className="max-h-56 w-full rounded-lg object-cover" /></div>}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => postMediaInputRef.current?.click()} className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"><ImagePlus size={16} /> Photo</button>
+              <button type="button" onClick={() => postMediaInputRef.current?.click()} className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Camera size={16} /> Video</button>
+              <button type="submit" disabled={uploadingPhoto || (!text.trim() && !selectedPhoto)} className="flex h-10 items-center gap-2 rounded-lg bg-teal-700 px-4 text-sm font-bold text-white hover:bg-teal-800 disabled:opacity-50">{uploadingPhoto ? 'Posting...' : 'Post'}</button>
+            </div>
+            <input ref={postMediaInputRef} type="file" accept="image/*,video/*" onChange={handlePostPhotoChange} className="hidden" aria-label="Choose a media file for your post" />
+          </form>
         </div>
       )}
 
@@ -1150,7 +1509,25 @@ function SocialApp() {
 }
 
 function App() {
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      return window.localStorage.getItem('hasSeenOnboarding') !== 'true'
+    } catch {
+      return true
+    }
+  })
+
+  const completeOnboarding = () => {
+    try {
+      window.localStorage.setItem('hasSeenOnboarding', 'true')
+    } catch {
+      // Keep the current session usable if storage is unavailable.
+    }
+    setShowOnboarding(false)
+  }
+
   if (window.location.pathname === '/admin-payouts') return <AdminPayouts />
+  if (showOnboarding) return <Onboarding onComplete={completeOnboarding} />
   return <SocialApp />
 }
 

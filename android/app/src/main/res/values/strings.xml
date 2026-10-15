@@ -1,7 +1,3 @@
-<?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Nagesh Social Media - Lifetime</string>
-    <string name="title_activity_main">Nagesh Social Media - Lifetime</string>
-    <string name="package_name">com.nagesh.socialmedia.lifetime</string>
-    <string name="custom_url_scheme">com.nagesh.socialmedia.lifetime</string>
+  <string name="app_name">Nagesh Social Media</string>
 </resources>

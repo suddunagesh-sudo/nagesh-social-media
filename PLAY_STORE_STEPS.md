@@ -1,6 +1,6 @@
 # GitHub Actions se signed AAB banana
 
-Local Android Studio build ki zaroorat nahi hai. `.github/workflows/build-aab.yml` GitHub ke cloud runner par app build karke signed Android App Bundle (AAB) artifact upload karega.
+Local Android Studio build ki zaroorat nahi hai. `.github/workflows/lifetime.yml` GitHub ke cloud runner par app build karke signed Android App Bundle (AAB) artifact upload karega.
 
 ## 1. Keystore banayein
 
@@ -27,14 +27,28 @@ GitHub repository mein **Settings > Secrets and variables > Actions > New reposi
 | `ANDROID_KEYSTORE_PASSWORD` | Keystore banate waqt dala gaya keystore password |
 | `ANDROID_KEY_ALIAS` | `my-key-alias` |
 | `ANDROID_KEY_PASSWORD` | Key password; agar prompt par wahi password dala tha to wahi password |
+| `VITE_SUPABASE_URL` | `.env` mein configured Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | `.env` mein configured Supabase anon/public key |
 
 Secrets ko workflow YAML ya kisi project file mein na likhein.
 
 ## 4. Workflow chalayein aur AAB download karein
 
-- Workflow `main` branch par push se khud chalega.
+- Workflow `main` ya `master` branch par push se chalega. Use **Actions > Build lifetime Android AAB > Run workflow** se manually bhi chala sakte hain.
 - Build successful ho jaane par us workflow run ko kholein.
-- **Artifacts** section se `app-release-aab` download karein. ZIP extract karne par `app-release.aab` milega.
+- **Artifacts** section se `lifetime-release-aab` download karein. ZIP extract karne par `app-release.aab` milega.
 - AAB ko Play Console ke testing ya production release mein upload karein.
 
-Workflow Node 20, Java 17 aur Android SDK GitHub runner par setup karke web build, Capacitor copy aur signed `bundleRelease` karta hai. Is process ke liye local Android Studio build ki zaroorat nahi.
+Workflow Node 22, Java 17 aur Android SDK GitHub runner par setup karke web build, Capacitor copy aur signed `bundleRelease` karta hai. Gradle dependencies cache hoti hain. Is process ke liye local Android Studio build ki zaroorat nahi.
+
+## EAS Build se AAB banana
+
+Yeh Vite + Capacitor project hai, Expo/React Native app nahi. EAS Build existing native Android project ko build karega; `app.json` EAS ko app metadata deta hai aur `eas.json` production AAB profile set karta hai.
+
+1. EAS CLI available karein: `npx eas-cli --version`.
+2. Expo account mein sign in karein: `npx eas-cli login`.
+3. Pehli baar project link karein: `npx eas-cli init`.
+4. Production AAB build karein: `npx eas-cli build -p android --profile production`.
+5. Android credentials ke prompt par, agar yeh app Play Store par pehle se hai, us listing ke existing upload keystore ko EAS mein upload karein. Naya keystore sirf tab generate karein jab yeh bilkul nayi Play Store listing ho.
+
+Build complete hone ke baad EAS build page se signed `.aab` download karein. Keystore ya password ko repository mein commit na karein. Android release build EAS ke managed credentials ke liye `eas-build.gradle` integration use karta hai; GitHub Actions build apne configured secrets se signing karta rahega.

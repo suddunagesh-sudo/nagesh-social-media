@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import SponsoredAd from './SponsoredAd'
 
 const adClient = import.meta.env.VITE_ADSENSE_CLIENT || ''
 const adSlots = {
@@ -59,6 +60,8 @@ export default function AdBanner({ title = 'Sponsored', className = '', placemen
     return () => observer?.disconnect()
   }, [configured, slot])
 
+  if (!configured) return <SponsoredAd className={className} />
+
   return (
     <div ref={ref} className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_3px_16px_rgba(31,41,55,0.035)] ${className}`}>
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -77,11 +80,7 @@ export default function AdBanner({ title = 'Sponsored', className = '', placemen
               data-full-width-responsive="true"
             />
           </div>
-        ) : (
-          <div className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-xs text-slate-500">
-            Web ad placement is not configured.
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   )

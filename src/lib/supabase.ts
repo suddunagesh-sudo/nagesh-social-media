@@ -36,6 +36,7 @@ export type SocialPost = {
   time: string
   likes: number
   views: number
+  shareCount: number
   photo?: string
   mediaType?: 'image' | 'video'
   comments?: string[]
@@ -113,6 +114,7 @@ function mapPost(record: Record<string, unknown>): SocialPost {
     time: typeof record.created_at === 'string' ? new Date(record.created_at).toLocaleString() : 'Just now',
     likes: typeof record.likes === 'number' ? record.likes : 0,
     views: typeof record.views === 'number' ? record.views : 0,
+    shareCount: typeof record.share_count === 'number' ? record.share_count : 0,
     photo: mediaUrl,
     mediaType,
     comments: Array.isArray(record.comments)
@@ -235,7 +237,7 @@ export async function fetchProfiles(): Promise<{ directory: PublicProfile[]; pro
   const { data: userData, error: userError } = await supabase.auth.getUser()
   const { data: directoryData, error: directoryError } = await supabase
     .from('profiles')
-    .select('id, full_name, username, bio, avatar_url, referral_code')
+    .select('id, full_name, username, bio, avatar_url, referral_code, referred_by')
   if (directoryError) throw directoryError
 
   const toProfile = (record: { id?: unknown; full_name?: unknown; username?: unknown; bio?: unknown; avatar_url?: unknown; referral_code?: unknown; referred_by?: unknown }): PublicProfile => ({
@@ -272,6 +274,128 @@ export async function fetchProfiles(): Promise<{ directory: PublicProfile[]; pro
     directory: profiles,
     profile,
   }
+}
+
+export async function searchProfilesByName(query: string): Promise<PublicProfile[]> {
+  const trimmed = query.trim()
+  if (trimmed.length < 2) return []
+
+  const pattern = `%${trimmed.replace(/[\\%_]/g, '\\$&')}%`
+  const profileColumns = 'id, full_name, username, bio, avatar_url'
+  const [nameResults, usernameResults] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select(profileColumns)
+      .ilike('full_name', pattern)
+      .limit(20),
+    supabase
+      .from('profiles')
+      .select(profileColumns)
+      .ilike('username', pattern)
+      .limit(20),
+  ])
+  if (nameResults.error) throw nameResults.error
+  if (usernameResults.error) throw usernameResults.error
+
+  const profilesById = new Map<string, (typeof nameResults.data)[number]>()
+  for (const profile of [...(nameResults.data ?? []), ...(usernameResults.data ?? [])]) {
+    profilesById.set(profile.id, profile)
+  }
+
+  return [...profilesById.values()]
+    .sort((first, second) => (first.full_name ?? '').localeCompare(second.full_name ?? ''))
+    .slice(0, 20)
+    .map((profile) => ({
+    id: typeof profile.id === 'string' ? profile.id : undefined,
+    fullName: typeof profile.full_name === 'string' ? profile.full_name : '',
+    username: typeof profile.username === 'string' ? profile.username : undefined,
+    bio: typeof profile.bio === 'string' ? profile.bio : '',
+    avatarUrl: typeof profile.avatar_url === 'string' ? profile.avatar_url : '',
+  }))
+}
+
+export type SocialNotification = {
+  id: string
+  actorId: string
+  actorName: string
+  actorAvatar: string
+  postId: number | string | null
+  type: 'like' | 'comment'
+  content: string | null
+  isRead: boolean
+  createdAt: string
+}
+
+export async function fetchNotifications(userId: string): Promise<SocialNotification[]> {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('id, actor_id, post_id, type, content, is_read, created_at, profiles!notifications_actor_id_fkey(full_name, username, avatar_url)')
+    .eq('recipient_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(30)
+  if (error) throw error
+
+  return (data ?? []).map((row) => {
+    const relatedProfile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles
+    const actor = relatedProfile && typeof relatedProfile === 'object' ? relatedProfile : null
+    return {
+      id: row.id,
+      actorId: row.actor_id,
+      actorName: actor?.full_name || actor?.username || 'A user',
+      actorAvatar: actor?.avatar_url || '',
+      postId: row.post_id,
+      type: row.type,
+      content: row.content,
+      isRead: row.is_read,
+      createdAt: row.created_at,
+    }
+  })
+}
+
+export async function fetchUnreadNotificationCount(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('recipient_id', userId)
+    .eq('is_read', false)
+  if (error) throw error
+  return count ?? 0
+}
+
+export async function createNotification(notification: {
+  recipientId: string
+  postId: number | string
+  type: 'like' | 'comment'
+  content?: string | null
+}): Promise<void> {
+  const { data: authData, error: authError } = await supabase.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in to notify the post owner.')
+  if (notification.recipientId === authData.user.id) return
+
+  const { error } = await supabase.from('notifications').insert({
+    recipient_id: notification.recipientId,
+    actor_id: authData.user.id,
+    post_id: notification.postId,
+    type: notification.type,
+    content: notification.content ?? null,
+  })
+  if (error) throw error
+}
+
+export async function markNotificationsRead(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('recipient_id', userId)
+    .eq('is_read', false)
+  if (error) throw error
+}
+
+export async function incrementPostShareCount(postId: number | string): Promise<void> {
+  const { data, error } = await supabase.rpc('increment_post_share_count', { p_post_id: postId })
+  if (error) throw error
+  if (data === null) throw new Error('The post share count was not updated.')
 }
 
 export async function fetchAccountWallet(userId: string): Promise<AccountWallet> {
@@ -371,7 +495,12 @@ export async function requestPayout(request: {
   if (error) throw error
 }
 
-export async function createPost(content: string, imageUrl: string | null): Promise<SocialPost> {
+export async function createPost(
+  content: string,
+  imageUrl: string | null,
+  mediaType: 'image' | 'video' = 'image',
+  videoUrl?: string | null,
+): Promise<SocialPost> {
   const { data: authData, error: authError } = await supabase.auth.getUser()
   if (authError) throw authError
   if (!authData.user) throw new Error('Sign in to publish a post.')
@@ -379,11 +508,61 @@ export async function createPost(content: string, imageUrl: string | null): Prom
   const { data, error } = await supabase.from('posts').insert({
     user_id: authData.user.id,
     content,
-    image_url: imageUrl,
+    image_url: mediaType === 'image' ? imageUrl : null,
+    video_url: mediaType === 'video' ? (videoUrl ?? imageUrl ?? null) : null,
+    media_type: mediaType,
     likes: 0,
   }).select('*, profiles!posts_user_id_fkey(full_name, avatar_url, username)').single()
   if (error) throw error
   return mapPost(data as Record<string, unknown>)
+}
+
+export async function addCommentToPost(postId: number | string, content: string): Promise<void> {
+  const { data: authData, error: authError } = await supabase.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in to comment.')
+
+  const { error } = await supabase.from('comments').insert({
+    post_id: postId,
+    user_id: authData.user.id,
+    content,
+  })
+  if (error) throw error
+}
+
+export async function reportPostForModeration(postId: number | string, reason = 'spam'): Promise<void> {
+  const { data: authData, error: authError } = await supabase.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in to report a post.')
+
+  const { error } = await supabase.from('reports').insert({
+    post_id: postId,
+    user_id: authData.user.id,
+    reason,
+  })
+  if (error) throw error
+}
+
+export async function incrementPostViews(postId: number | string): Promise<void> {
+  const { error } = await supabase.rpc('increment_post_views', { p_post_id: postId })
+  if (error) {
+    const { data: currentPost, error: fetchError } = await supabase
+      .from('posts')
+      .select('views')
+      .eq('id', postId)
+      .maybeSingle()
+
+    if (fetchError) throw fetchError
+    if (!currentPost) return
+
+    const nextViews = Number(currentPost.views ?? 0) + 1
+    const { error: updateError } = await supabase
+      .from('posts')
+      .update({ views: nextViews })
+      .eq('id', postId)
+
+    if (updateError) throw updateError
+  }
 }
 
 export async function updatePostContent(postId: number | string, content: string): Promise<void> {
@@ -391,12 +570,15 @@ export async function updatePostContent(postId: number | string, content: string
   if (authError) throw authError
   if (!authData.user) throw new Error('Sign in to edit your post.')
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('posts')
     .update({ content })
     .eq('id', postId)
     .eq('user_id', authData.user.id)
+    .select('id')
+    .maybeSingle()
   if (error) throw error
+  if (!data) throw new Error('Post could not be updated. Check that you own this post.')
 }
 
 export async function setPostLiked(postId: number | string, isLiked: boolean): Promise<void> {
@@ -412,9 +594,12 @@ export async function setPostLiked(postId: number | string, isLiked: boolean): P
       .eq('user_id', authData.user.id)
     if (error) throw error
   } else {
-    const { error } = await supabase.from('likes').insert({
+    const { error } = await supabase.from('likes').upsert({
       user_id: authData.user.id,
       post_id: postId,
+    }, {
+      onConflict: 'post_id,user_id',
+      ignoreDuplicates: true,
     })
     if (error) throw error
   }
