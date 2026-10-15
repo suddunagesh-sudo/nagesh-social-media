@@ -612,8 +612,8 @@ function SocialApp() {
         ])
         if (active) setNotifications(loadedNotifications)
         if (active) setUnreadNotificationCount(unreadCount)
-      } catch (error) {
-        console.error('Notifications could not be loaded:', error)
+      } catch {
+        console.log("notif error ignored")
         if (active) {
           setNotifications([])
           setUnreadNotificationCount(0)
