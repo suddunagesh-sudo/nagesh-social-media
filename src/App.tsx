@@ -6,6 +6,9 @@ import {
   createStory,
   fetchAccountWallet,
   fetchCurrentUserLikes,
+  fetchProfileById,
+  fetchPostComments,
+  fetchPostLikeCount,
   fetchNotifications,
   fetchPayoutHistory,
   fetchPosts,
@@ -24,7 +27,7 @@ import {
   updatePostContent,
   uploadAvatar,
   uploadPostPhoto,
-  uploadStoryPhoto,
+  uploadStoryMedia,
   type PublicProfile,
   type AccountWallet,
   type PayoutRequest,
@@ -36,6 +39,7 @@ import { initializeAdMob } from './ads'
 import AdBanner from './components/AdBanner'
 import AdEarn from './components/AdEarn'
 import AdminPayouts from './components/AdminPayouts'
+import AdminWithdrawals from './components/AdminWithdrawals'
 import FeedAd from './components/FeedAd'
 import WithdrawModal from './components/WithdrawModal'
 import Onboarding from './components/Onboarding'
@@ -77,6 +81,7 @@ type Story = SupabaseStory
 type Profile = PublicProfile
 
 const SAVED_POSTS_STORAGE_KEY = 'nagesh-saved-posts'
+const SITE_OWNER_NAME = 'Chhavinath Nagesh'
 
 function readSavedPostIds(): (number | string)[] {
   try {
@@ -120,6 +125,7 @@ function getInitials(name: string) {
 }
 
 function Avatar({ name, image, size = 'md' }: { name: string; image?: string; size?: 'sm' | 'md' | 'lg' }) {
+  const [imageFailed, setImageFailed] = useState(false)
   const colors: Record<string, string> = {
     'Aarav Sharma': 'bg-orange-600',
     'Priya Patel': 'bg-rose-600',
@@ -127,16 +133,22 @@ function Avatar({ name, image, size = 'md' }: { name: string; image?: string; si
   }
   const dimensions = { sm: 'h-9 w-9 text-xs', md: 'h-11 w-11 text-sm', lg: 'h-14 w-14 text-base' }
 
+  useEffect(() => {
+    setImageFailed(false)
+  }, [image])
+
   return (
     <div className={`flex shrink-0 items-center justify-center rounded-full font-bold text-white ring-2 ring-white ${colors[name] ?? 'bg-slate-600'} ${dimensions[size]}`} aria-label={`${name} avatar`}>
-      {image ? <img src={image} alt="" className="h-full w-full rounded-full object-cover" /> : getInitials(name)}
+      {image ? <img src={imageFailed ? '/default-avatar.png' : image} alt="" onError={(event) => {
+        if (imageFailed) event.currentTarget.hidden = true
+        else setImageFailed(true)
+      }} className="h-full w-full rounded-full object-cover" /> : getInitials(name)}
     </div>
   )
 }
 
 function PostCard({
   post,
-  currentUserName,
   isLiked,
   isLikePending,
   isSaved,
@@ -148,22 +160,25 @@ function PostCard({
   onSave,
   onComment,
   onShare,
+  onOpenProfile,
+  isSiteOwner,
   currentUserId,
 }: {
   post: Post
-  currentUserName: string
   currentUserId: string
   isLiked: boolean
   isLikePending: boolean
   isSaved: boolean
   onView: (postId: number | string) => void
-  onDelete: (postId: number | string) => void
+  onDelete: (postId: number | string, isAdmin?: boolean) => void
   onEdit: (post: Post) => void
   onCopyLink: (post: Post) => void
   onLike: (postId: number | string) => void
   onSave: (postId: number | string) => void
   onComment: (postId: number | string, comment: string) => void
   onShare: (post: Post) => void
+  onOpenProfile: (userId: string) => void
+  isSiteOwner: boolean
 }) {
   const articleRef = useRef<HTMLElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -220,7 +235,13 @@ function PostCard({
   const postEarnings = post.likes / 10
   const authorName = post.profiles?.full_name || post.profiles?.username || 'Unknown User'
   const authorAvatar = post.profiles?.avatar_url || undefined
-  const isOwnPost = post.user_id === currentUserId
+  const isOwnPost = post.user_id === currentUserId || post.profiles?.id === currentUserId
+  const isOwnerPost = post.profiles?.full_name === SITE_OWNER_NAME
+  const canDeletePost = isOwnPost || isSiteOwner
+  const authorId = post.user_id ?? post.profiles?.id
+  useEffect(() => {
+    console.log('Post owner IDs:', { postUserId: post.user_id, profileUserId: post.profiles?.id, currentUserId })
+  }, [post.user_id, post.profiles?.id, currentUserId])
   const chooseOption = (action: () => void) => {
     setOptionsOpen(false)
     action()
@@ -230,19 +251,24 @@ function PostCard({
     <article id={`post-${post.id}`} ref={articleRef} className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_3px_16px_rgba(31,41,55,0.035)]">
       <div className="flex items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 items-center gap-3">
-          <Avatar name={authorName} image={authorAvatar} />
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-bold text-slate-900">{authorName}</h3>
-            <p className="mt-0.5 text-xs text-slate-500">{post.time} <span className="px-1">·</span> Everyone</p>
-          </div>
+          <button type="button" onClick={() => authorId && onOpenProfile(authorId)} disabled={!authorId} className="flex min-w-0 items-center gap-3 text-left disabled:cursor-default">
+            <Avatar name={authorName} image={authorAvatar} />
+            <span className="min-w-0">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-sm font-bold text-slate-900">{authorName}</span>
+                {isOwnerPost && <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-800" aria-label="Owner">👑 Owner</span>}
+              </span>
+              <span className="mt-0.5 block text-xs text-slate-500">{post.time} <span className="px-1">·</span> Everyone</span>
+            </span>
+          </button>
         </div>
         <div ref={menuRef} className="relative flex items-center gap-1">
           <button type="button" onClick={() => setOptionsOpen((open) => !open)} className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100" aria-label="More post options" aria-expanded={optionsOpen} aria-haspopup="menu"><MoreHorizontal size={20} /></button>
           {optionsOpen && (
             <div role="menu" aria-label="Post options" className="absolute right-0 top-10 z-20 min-w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
               <button type="button" role="menuitem" onClick={() => chooseOption(() => onCopyLink(post))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"><Copy size={16} /> Copy Link</button>
-              <button type="button" role="menuitem" disabled={!isOwnPost} onClick={() => chooseOption(() => onEdit(post))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"><Pencil size={16} /> Edit Post</button>
-              <button type="button" role="menuitem" disabled={!isOwnPost} onClick={() => chooseOption(() => onDelete(post.id))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45"><Trash2 size={16} /> Delete</button>
+              <button type="button" role="menuitem" disabled={!isOwnPost} onClick={() => chooseOption(() => onEdit(post))} className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 ${isOwnPost ? '' : 'disabled:cursor-not-allowed disabled:opacity-45'}`}><Pencil size={16} /> Edit Post</button>
+              <button type="button" role="menuitem" disabled={!canDeletePost} onClick={() => chooseOption(() => onDelete(post.id, isSiteOwner))} className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 ${canDeletePost ? '' : 'disabled:cursor-not-allowed disabled:opacity-45'}`}><Trash2 size={16} /> {isSiteOwner ? 'Delete (Admin)' : 'Delete'}</button>
             </div>
           )}
         </div>
@@ -269,7 +295,7 @@ function PostCard({
         <button type="button" onClick={() => onSave(post.id)} aria-label={isSaved ? 'Remove saved post' : 'Save post'} title={isSaved ? 'Remove saved post' : 'Save post'} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 ${isSaved ? 'text-teal-700' : 'text-slate-600'}`}><Bookmark size={17} fill={isSaved ? 'currentColor' : 'none'} /><span className="hidden sm:inline">Save</span></button>
       </div>
       <div className="border-t border-slate-100 px-4 py-3">
-        {(post.comments ?? []).map((comment, index) => <p key={`${post.id}-comment-${index}`} className="mb-2 text-sm text-slate-700"><span className="font-semibold text-slate-900">{currentUserName}</span> {comment}</p>)}
+        {(post.comments ?? []).map((comment) => <p key={comment.id} className="mb-2 text-sm text-slate-700"><span className="font-semibold text-slate-900">{comment.userName}</span> {comment.content}</p>)}
         <form onSubmit={(event) => {
           event.preventDefault()
           const comment = commentDraft.trim()
@@ -282,6 +308,116 @@ function PostCard({
         </form>
       </div>
     </article>
+  )
+}
+
+function ProfilePage({
+  userId,
+  currentUserId,
+  onBack,
+}: {
+  userId: string
+  currentUserId: string
+  onBack: () => void
+}) {
+  const [profileData, setProfileData] = useState<Profile | null>(null)
+  const [followersCount, setFollowersCount] = useState(0)
+  const [followingCount, setFollowingCount] = useState(0)
+  const [isFollowing, setIsFollowing] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [followPending, setFollowPending] = useState(false)
+  const isOwner = profileData?.fullName === SITE_OWNER_NAME
+
+  const refreshFollowData = useCallback(async () => {
+    const [followers, following, relationship] = await Promise.all([
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
+      currentUserId && currentUserId !== userId
+        ? supabase.from('follows').select('*').eq('follower_id', currentUserId).eq('following_id', userId).limit(1).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ])
+    if (followers.error) throw followers.error
+    if (following.error) throw following.error
+    if (relationship.error) throw relationship.error
+    setFollowersCount(followers.count ?? 0)
+    setFollowingCount(following.count ?? 0)
+    setIsFollowing(Boolean(relationship.data))
+  }, [currentUserId, userId])
+
+  useEffect(() => {
+    let active = true
+    const loadProfile = async () => {
+      try {
+        const fetchedProfile = await fetchProfileById(userId)
+        if (active) setProfileData(fetchedProfile)
+        await refreshFollowData()
+      } catch (error) {
+        console.error('Profile could not be loaded:', error)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    setLoading(true)
+    void loadProfile()
+    const channel = supabase.channel(`profile-follows-${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'follows' }, () => {
+        void refreshFollowData().catch((error: unknown) => console.error('Profile follow counts could not be refreshed:', error))
+      })
+      .subscribe()
+
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
+  }, [refreshFollowData, userId])
+
+  const toggleFollow = async () => {
+    if (!currentUserId || currentUserId === userId || followPending) return
+    setFollowPending(true)
+    try {
+      if (isFollowing) {
+        const { error } = await supabase.from('follows').delete()
+          .eq('follower_id', currentUserId)
+          .eq('following_id', userId)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('follows').insert({
+          follower_id: currentUserId,
+          following_id: userId,
+        })
+        if (error) throw error
+      }
+      await refreshFollowData()
+    } catch (error) {
+      console.error('Follow status could not be updated:', error)
+    } finally {
+      setFollowPending(false)
+    }
+  }
+
+  if (loading) return <section className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Loading profile…</section>
+  if (!profileData) return <section className="rounded-2xl border border-slate-200 bg-white p-6"><button type="button" onClick={onBack} className="text-sm font-semibold text-teal-800">← Back</button><p className="mt-4 text-sm text-slate-600">Profile could not be loaded.</p></section>
+
+  return (
+    <section aria-label={`${profileData.fullName} profile`} className="space-y-5">
+      <button type="button" onClick={onBack} className="text-sm font-semibold text-teal-800 hover:underline">← Back</button>
+      <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+        <Avatar name={profileData.fullName} image={profileData.avatarUrl} size="lg" />
+        <div className="min-w-0">
+          <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold text-slate-900">
+            <span className="truncate">{profileData.fullName}</span>
+            {isOwner && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-800">👑 Owner</span>}
+          </h1>
+          {profileData.username && <p className="text-sm text-slate-500">@{profileData.username}</p>}
+          <p className="mt-1 text-sm text-slate-600">{profileData.bio || 'Nagesh Social member'}</p>
+        </div>
+        {currentUserId !== userId && <button type="button" onClick={() => void toggleFollow()} disabled={!currentUserId || followPending} className={`ml-auto shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition disabled:opacity-60 ${isFollowing ? 'border border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-teal-700 text-white hover:bg-teal-800'}`}>{followPending ? 'Saving…' : isFollowing ? 'Following' : 'Follow'}</button>}
+      </div>
+      <div className="flex gap-6 px-1 text-sm text-slate-600" aria-live="polite">
+        <span>Followers: <strong className="text-slate-900">{followersCount.toLocaleString()}</strong></span>
+        <span>Following: <strong className="text-slate-900">{followingCount.toLocaleString()}</strong></span>
+      </div>
+    </section>
   )
 }
 
@@ -302,7 +438,7 @@ function SocialApp() {
   const [likedPosts, setLikedPosts] = useState<(number | string)[]>([])
   const [pendingLikePosts, setPendingLikePosts] = useState<(number | string)[]>([])
   const [activeStory, setActiveStory] = useState<Story | null>(null)
-  const [myStoryImage, setMyStoryImage] = useState<string | null>(null)
+  const [myStory, setMyStory] = useState<Story | null>(null)
   const [uploadingStory, setUploadingStory] = useState(false)
   const [profileEditorOpen, setProfileEditorOpen] = useState(false)
   const [profileNameDraft, setProfileNameDraft] = useState('')
@@ -320,7 +456,9 @@ function SocialApp() {
   const [searchResults, setSearchResults] = useState<Profile[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState('')
-  const [viewedProfile, setViewedProfile] = useState<Profile | null>(null)
+  const [selectedUserId, setSelectedUserId] = useState('')
+  const [followersCount, setFollowersCount] = useState(0)
+  const [followingCount, setFollowingCount] = useState(0)
   const [notifications, setNotifications] = useState<SocialNotification[]>([])
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
@@ -332,8 +470,47 @@ function SocialApp() {
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
   const [signingIn, setSigningIn] = useState(false)
   const [accountEmail, setAccountEmail] = useState('')
+  const [authUserId, setAuthUserId] = useState('')
   const currentUser = profile.fullName
-  const currentUserId = profile.id ?? ''
+  const currentUserId = authUserId
+  const isSiteOwner = profile.fullName === SITE_OWNER_NAME
+  const ownProfileId = page === 'profile' ? currentUserId : ''
+
+  const refreshFollowData = useCallback(async () => {
+    if (!ownProfileId) {
+      setFollowersCount(0)
+      setFollowingCount(0)
+      return
+    }
+
+    const [followersResult, followingResult, relationshipResult] = await Promise.all([
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', ownProfileId),
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', ownProfileId),
+    ])
+    if (followersResult.error) throw followersResult.error
+    if (followingResult.error) throw followingResult.error
+
+    setFollowersCount(followersResult.count ?? 0)
+    setFollowingCount(followingResult.count ?? 0)
+  }, [ownProfileId])
+
+  useEffect(() => {
+    if (!ownProfileId) return
+    let active = true
+    void refreshFollowData()
+      .catch((error: unknown) => {
+        if (active) console.error('Own profile follow counts could not be loaded:', error)
+      })
+    const channel = supabase.channel(`own-profile-follows-${ownProfileId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'follows' }, () => {
+        void refreshFollowData().catch((error: unknown) => console.error('Own profile follow counts could not be refreshed:', error))
+      })
+      .subscribe()
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
+  }, [ownProfileId, refreshFollowData])
 
   useEffect(() => {
     void initializeAdMob()
@@ -357,16 +534,24 @@ function SocialApp() {
 
   useEffect(() => {
     let active = true
-    void supabase.auth.getUser().then(({ data, error }) => {
+    const loadAuthUser = async () => {
+      const { data, error } = await supabase.auth.getUser()
       if (error) throw error
-      if (active) setAccountEmail(data.user?.email ?? '')
-    }).catch((error: unknown) => {
-      console.error('Account email could not be loaded:', error)
+      if (active) {
+        setAuthUserId(data.user?.id ?? '')
+        setAccountEmail(data.user?.email ?? '')
+      }
+    }
+    void loadAuthUser().catch((error: unknown) => console.error('Authenticated user could not be loaded:', error))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthUserId(session?.user.id ?? '')
+      setAccountEmail(session?.user.email ?? '')
     })
     return () => {
       active = false
+      subscription.unsubscribe()
     }
-  }, [currentUserId])
+  }, [])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const postMediaInputRef = useRef<HTMLInputElement>(null)
@@ -376,6 +561,11 @@ function SocialApp() {
   const userTotalViews = posts
     .filter((post) => post.user_id === currentUserId)
     .reduce((total, post) => total + post.views, 0)
+
+  const openProfile = (userId: string) => {
+    setSelectedUserId(userId)
+    setPage('user-profile')
+  }
 
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -388,8 +578,7 @@ function SocialApp() {
       if (error) throw error
 
       const { profile: signedInProfile, directory } = await fetchProfiles()
-      if (!signedInProfile) throw new Error('Your account profile could not be loaded.')
-      setProfile(signedInProfile)
+      setProfile(signedInProfile ?? { fullName: '', username: '', bio: '', avatarUrl: '' })
       setDirectoryProfiles(directory)
       setStories(await fetchStories())
       setLoginPassword('')
@@ -511,17 +700,35 @@ function SocialApp() {
       return
     }
     let active = true
+    setAccountWallet({ balance: 0, bluePoints: 0 })
     const loadAccountData = async () => {
       try {
         await refreshAccountData()
       } catch (error) {
-        console.error('Wallet, referral, or payout data could not be loaded:', error)
-        if (active) setNotice(error instanceof Error ? error.message : 'Account data could not be loaded.')
+        console.warn('Account data could not be loaded; showing a fallback balance of ₹0.00:', error)
+        if (active) setAccountWallet({ balance: 0, bluePoints: 0 })
       }
     }
     void loadAccountData()
     return () => {
       active = false
+    }
+  }, [currentUserId, refreshAccountData])
+
+  useEffect(() => {
+    if (!currentUserId) return
+    const channel = supabase.channel(`wallet-ledger-${currentUserId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'reward_ledger',
+        filter: `user_id=eq.${currentUserId}`,
+      }, () => {
+        void refreshAccountData().catch((error: unknown) => console.error('Wallet could not be refreshed:', error))
+      })
+      .subscribe()
+    return () => {
+      void supabase.removeChannel(channel)
     }
   }, [currentUserId, refreshAccountData])
 
@@ -744,18 +951,31 @@ function SocialApp() {
     }
   }
 
-  const deletePost = async (id: number | string) => {
-    if (!window.confirm('Are you sure you want to delete this post?')) return
+  const deletePost = async (id: number | string, isAdmin = false) => {
+    if (!window.confirm(isAdmin ? 'As the owner, are you sure you want to delete this post?' : 'Are you sure you want to delete this post?')) return
     try {
-      const { data, error } = await supabase
-        .from('posts')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', currentUserId)
-        .select('id')
-        .maybeSingle()
-      if (error) throw error
-      if (!data) throw new Error('Only the post owner can delete this post.')
+      let deletedPostId: number | string | null = null
+      if (isAdmin && isSiteOwner) {
+        const { data, error } = await supabase
+          .from('posts')
+          .delete()
+          .eq('id', id)
+          .select('id')
+          .maybeSingle()
+        if (error) throw error
+        deletedPostId = data?.id ?? null
+      } else {
+        const { data, error } = await supabase
+          .from('posts')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', currentUserId)
+          .select('id')
+          .maybeSingle()
+        if (error) throw error
+        deletedPostId = data?.id ?? null
+      }
+      if (deletedPostId === null) throw new Error('Post could not be deleted. Check your permissions.')
       const remainingPosts = posts.filter((post) => post.id !== id)
       postOwnersRef.current.delete(id)
       setPosts(remainingPosts)
@@ -836,37 +1056,31 @@ function SocialApp() {
     const post = posts.find((candidate) => candidate.id === id)
     if (!post || pendingLikePostIdsRef.current.has(id)) return
 
-    const nextLikes = Math.max(0, post.likes + (alreadyLiked ? -1 : 1))
     pendingLikePostIdsRef.current.add(id)
     setPendingLikePosts((pending) => [...pending, id])
-    setLikedPosts((currentLikes) => alreadyLiked
-      ? currentLikes.filter((likedId) => likedId !== id)
-      : [...currentLikes, id])
-    setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
-      ? { ...currentPost, likes: nextLikes }
-      : currentPost))
 
     try {
       await setPostLiked(id, alreadyLiked)
+      setLikedPosts((currentLikes) => alreadyLiked
+        ? currentLikes.filter((likedId) => likedId !== id)
+        : [...currentLikes, id])
+      const likes = await fetchPostLikeCount(id)
+      setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
+        ? { ...currentPost, likes }
+        : currentPost))
       if (!alreadyLiked && post.user_id) {
         try {
           await createNotification({ recipientId: post.user_id, postId: id, type: 'like' })
         } catch (notificationError) {
-          console.error('Like notification could not be saved:', notificationError)
+          console.log('Like notification unavailable:', notificationError)
           setNotice('Your like was saved, but the post owner was not notified.')
         }
       }
     } catch (error) {
       console.error('Your like could not be saved to the likes table:', error)
-      setLikedPosts((currentLikes) => alreadyLiked
-        ? [...currentLikes, id]
-        : currentLikes.filter((likedId) => likedId !== id))
-      setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
-        ? { ...currentPost, likes: post.likes }
-        : currentPost))
       setNotice(error instanceof Error
         ? error.message
-        : 'Sign in to like posts. If you are signed in, apply the likes database migration.')
+        : 'Your like could not be saved or refreshed.')
     } finally {
       pendingLikePostIdsRef.current.delete(id)
       setPendingLikePosts((pending) => pending.filter((pendingId) => pendingId !== id))
@@ -876,8 +1090,9 @@ function SocialApp() {
   const addComment = async (postId: number | string, comment: string) => {
     try {
       await addCommentToPost(postId, comment)
+      const comments = await fetchPostComments(postId)
       setPosts((currentPosts) => currentPosts.map((post) => post.id === postId
-        ? { ...post, comments: [...(post.comments ?? []), comment] }
+        ? { ...post, comments }
         : post))
       const post = posts.find((currentPost) => currentPost.id === postId)
       let notificationFailed = false
@@ -890,13 +1105,14 @@ function SocialApp() {
             content: comment,
           })
         } catch (notificationError) {
-          console.error('Comment notification could not be saved:', notificationError)
+          console.log('Comment notification unavailable:', notificationError)
           notificationFailed = true
         }
       }
       if (notificationFailed) console.error('Comment was posted, but its owner was not notified.')
     } catch (error) {
-      console.error('Comment could not be saved:', error)
+      console.error('Comment could not be saved or refreshed:', error)
+      setNotice(error instanceof Error ? error.message : 'Comment could not be saved.')
     }
   }
 
@@ -939,8 +1155,14 @@ function SocialApp() {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setNotice('Choose an image file for your story.')
+    const isVideo = file.type.startsWith('video/')
+    const isPhoto = file.type.startsWith('image/')
+    if (!isPhoto && !isVideo) {
+      setNotice('Choose an image or video file for your story.')
+      return
+    }
+    if (file.size > (isVideo ? 25 : 2) * 1024 * 1024) {
+      setNotice(isVideo ? 'Choose a video under 25 MB.' : 'Choose an image under 2 MB.')
       return
     }
     if (!supabaseConfigured) {
@@ -953,11 +1175,12 @@ function SocialApp() {
       const { data: authData, error: authError } = await supabase.auth.getUser()
       if (authError) throw authError
       if (!authData.user) throw new Error('Sign in to publish a story.')
-      const compressedFile = await compressPhoto(file)
-      if (!compressedFile) throw new Error('Could not process the selected story photo.')
-      const imageUrl = await uploadStoryPhoto(compressedFile)
-      const story = await createStory(profile.fullName, imageUrl)
-      setMyStoryImage(imageUrl)
+      const mediaFile = isPhoto ? await compressPhoto(file) : file
+      if (!mediaFile) throw new Error('Could not process the selected story photo.')
+      const mediaUrl = await uploadStoryMedia(mediaFile, authData.user.id)
+      const mediaType = isVideo ? 'video' : 'photo'
+      const story = await createStory(profile.fullName, mediaUrl, mediaType, profile.avatarUrl)
+      setMyStory(story)
       setStories((currentStories) => [story, ...currentStories])
       setNotice('Your story is live.')
     } catch (error) {
@@ -1082,7 +1305,7 @@ function SocialApp() {
         setUnreadNotificationCount(0)
       }
     } catch (error) {
-      console.error('Notifications could not be refreshed:', error)
+      console.log('Notifications unavailable:', error)
       setNotifications([])
       setUnreadNotificationCount(0)
     } finally {
@@ -1130,11 +1353,12 @@ function SocialApp() {
         <PostCard
           key={post.id}
           post={post}
-          currentUserName={currentUser}
           currentUserId={currentUserId}
           isLiked={likedPosts.includes(post.id)}
           isLikePending={pendingLikePosts.includes(post.id)}
           isSaved={savedPostIds.includes(post.id)}
+          onOpenProfile={openProfile}
+          isSiteOwner={isSiteOwner}
           onView={handleView}
           onDelete={deletePost}
           onEdit={openPostEditor}
@@ -1194,7 +1418,7 @@ function SocialApp() {
             {searchResults.length > 0 && (
               <div className="absolute left-0 right-0 top-[calc(100%+8px)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
                 {searchResults.slice(0, 5).map((result) => (
-                  <button key={result.id ?? result.fullName} type="button" onClick={() => { setViewedProfile(result); setPage('user-profile'); }} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50">
+                  <button key={result.id ?? result.fullName} type="button" onClick={() => result.id && openProfile(result.id)} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50">
                     <Avatar name={result.fullName} image={result.avatarUrl} size="sm" />
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-slate-800">{result.fullName}</span>
@@ -1236,7 +1460,8 @@ function SocialApp() {
             <button type="button" onClick={() => setPage('profile')} className="flex h-10 items-center gap-2 rounded-full border border-teal-100 bg-teal-50 px-3 text-teal-900 transition hover:bg-teal-100" aria-label={`Wallet: ₹${accountWallet.balance.toFixed(2)}, ${accountWallet.bluePoints} Blue Points`}>
               <Wallet size={17} /> <span className="text-xs font-bold">₹{accountWallet.balance.toFixed(2)}</span><span className="hidden text-[11px] font-semibold text-teal-700 sm:inline">💙 {accountWallet.bluePoints.toLocaleString()}</span>
             </button>
-            <button type="button" onClick={() => setPage('profile')} className="hidden items-center gap-2 rounded-full p-1 pr-2 transition hover:bg-slate-100 sm:flex" aria-label="Open profile"><Avatar name={profile.fullName} image={profile.avatarUrl} size="sm" /><span className="text-sm font-semibold text-slate-700">{profile.fullName || 'Sign in'}</span></button>
+            <button type="button" onClick={() => setPage('profile')} className="hidden items-center gap-2 rounded-full p-1 pr-2 transition hover:bg-slate-100 sm:flex" aria-label="Open profile"><Avatar name={profile.fullName} image={profile.avatarUrl} size="sm" /><span className="text-sm font-semibold text-slate-700">{profile.fullName || 'Sign in'}</span>{isSiteOwner && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">Owner</span>}</button>
+            {isSiteOwner && <a href="/admin" className="hidden rounded-lg px-3 py-2 text-xs font-bold text-teal-800 hover:bg-teal-50 sm:inline-flex">Admin</a>}
             {currentUserId && <button type="button" onClick={() => void signOut()} className="flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100" aria-label="Sign out"><LogOut size={16} /><span className="hidden md:inline">Sign out</span></button>}
           </div>
         </div>
@@ -1297,19 +1522,11 @@ function SocialApp() {
             userId={currentUserId}
             onSaveName={saveSettingsName}
             onChangePassword={changeAccountPassword}
-          /> : page === 'user-profile' && viewedProfile ? <section aria-label={`${viewedProfile.fullName} profile`} className="space-y-5">
-            <button type="button" onClick={() => setPage('search')} className="text-sm font-semibold text-teal-800 hover:underline">← Back to search</button>
-            <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5">
-              <Avatar name={viewedProfile.fullName} image={viewedProfile.avatarUrl} size="lg" />
-              <div className="min-w-0">
-                <h1 className="truncate text-xl font-bold text-slate-900">{viewedProfile.fullName}</h1>
-                {viewedProfile.username && <p className="text-sm text-slate-500">@{viewedProfile.username}</p>}
-                <p className="mt-1 text-sm text-slate-600">{viewedProfile.bio || 'Nagesh Social member'}</p>
-              </div>
-            </div>
+          /> : page === 'user-profile' && selectedUserId ? <div className="space-y-5">
+            <ProfilePage userId={selectedUserId} currentUserId={currentUserId} onBack={() => setPage('search')} />
             <h2 className="text-lg font-bold text-slate-900">Posts</h2>
-            <div className="space-y-4">{renderPosts(posts.filter((post) => post.user_id === viewedProfile.id), 'No posts yet', 'This profile has not shared any posts.')}</div>
-          </section> : page === 'search' ? <section aria-label="Search results" className="space-y-5">
+            <div className="space-y-4">{renderPosts(posts.filter((post) => post.user_id === selectedUserId), 'No posts yet', 'This profile has not shared any posts.')}</div>
+          </div> : page === 'search' ? <section aria-label="Search results" className="space-y-5">
             <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_3px_16px_rgba(31,41,55,0.035)] sm:p-5">
               <div className="flex items-center gap-3 rounded-full bg-slate-100 px-4 py-2.5">
                 <Search size={16} className="text-slate-500" />
@@ -1317,7 +1534,7 @@ function SocialApp() {
               </div>
               <div className="mt-4 space-y-3">
                 {searchLoading ? <p className="text-sm text-slate-500">Searching…</p> : searchError ? <p role="alert" className="text-sm text-rose-700">{searchError}</p> : searchResults.length ? searchResults.map((result) => (
-                  <button key={result.id ?? result.fullName} type="button" onClick={() => { setViewedProfile(result); setPage('user-profile'); }} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 px-3 py-2.5 text-left hover:bg-slate-50">
+                  <button key={result.id ?? result.fullName} type="button" onClick={() => result.id && openProfile(result.id)} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 px-3 py-2.5 text-left hover:bg-slate-50">
                     <Avatar name={result.fullName} image={result.avatarUrl} size="sm" />
                     <span className="min-w-0"><span className="block text-sm font-semibold text-slate-800">{result.fullName}</span><span className="block text-xs text-slate-500">{result.username ? `@${result.username}` : 'Profile'}</span></span>
                   </button>
@@ -1332,7 +1549,9 @@ function SocialApp() {
             </div>
             <div className="flex gap-3 overflow-x-auto pb-1">
               <button type="button" onClick={() => fileInputRef.current?.click()} className="group relative h-[164px] w-[104px] shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-left sm:h-[184px] sm:w-[116px]">
-                {myStoryImage && <img src={myStoryImage} alt="Your story" className="absolute inset-0 h-full w-full object-cover" />}
+                {myStory && (myStory.mediaType === 'video'
+                  ? <video src={myStory.image} muted playsInline className="absolute inset-0 h-full w-full object-cover" />
+                  : <img src={myStory.image} alt="Your story" className="absolute inset-0 h-full w-full object-cover" />)}
                 <span className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-slate-900/65 to-transparent" />
                 <span className="absolute left-1/2 top-1/2 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-teal-700 text-white shadow-md transition group-hover:scale-105"><Plus size={20} /></span>
                 <span className="absolute inset-x-1 bottom-2 text-center text-xs font-bold text-white">{uploadingStory ? 'Uploading...' : 'Create story'}</span>
@@ -1343,12 +1562,12 @@ function SocialApp() {
                     ? <video src={story.image} muted playsInline className="absolute inset-0 h-full w-full object-cover" />
                     : <img src={story.image} alt="" className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-105" />}
                   <span className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/5 to-black/10" />
-                  <span className="absolute left-2.5 top-2.5 rounded-full bg-teal-700 p-[2px]"><Avatar name={story.name} size="sm" /></span>
+                  <span className="absolute left-2.5 top-2.5 rounded-full bg-teal-700 p-[2px]"><Avatar name={story.name} image={story.avatarUrl || '/default-avatar.png'} size="sm" /></span>
                   <span className="absolute inset-x-2 bottom-2 text-xs font-bold leading-tight text-white">{story.name}</span>
                 </button>
               ))}
             </div>
-            <input ref={fileInputRef} type="file" accept="image/*" onChange={(event) => void handleStoryUpload(event)} className="hidden" aria-label="Upload a story image" />
+            <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={(event) => void handleStoryUpload(event)} className="hidden" aria-label="Upload a story image or video" />
           </section>
 
           <AdBanner placement="feed" title="Sponsored" className="mb-1" />
@@ -1384,10 +1603,14 @@ function SocialApp() {
             <AdEarn />
             <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_3px_16px_rgba(31,41,55,0.035)]">
               <div className="bg-[#dcece7] px-6 pb-7 pt-6 sm:px-8">
-                <div className="flex flex-wrap items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3"><Avatar name={profile.fullName} image={profile.avatarUrl} size="lg" /><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wider text-teal-800">Creator profile</p><h1 className="mt-1 truncate text-xl font-bold text-slate-900">{profile.fullName}</h1><p className="mt-1 max-w-md text-sm text-slate-600">{profile.bio || 'Add a short bio about yourself.'}</p></div></div><button type="button" onClick={openProfileEditor} className="flex h-10 shrink-0 items-center gap-2 rounded-lg border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-800 transition hover:bg-teal-50"><Pencil size={16} /> Edit Profile</button></div>
+                <div className="flex flex-wrap items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3"><Avatar name={profile.fullName} image={profile.avatarUrl} size="lg" /><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wider text-teal-800">Creator profile</p><h1 className="mt-1 flex flex-wrap items-center gap-2 text-xl font-bold text-slate-900"><span className="truncate">{profile.fullName}</span>{isSiteOwner && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-800">👑 Owner</span>}</h1><p className="mt-1 max-w-md text-sm text-slate-600">{profile.bio || 'Add a short bio about yourself.'}</p></div></div><button type="button" onClick={openProfileEditor} className="flex h-10 shrink-0 items-center gap-2 rounded-lg border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-800 transition hover:bg-teal-50"><Pencil size={16} /> Edit Profile</button></div>
                 <p className="mt-7 text-sm font-semibold text-slate-600">Total Earnings</p>
                 <p className="mt-1 text-4xl font-bold tracking-tight text-slate-900">₹{accountWallet.balance.toFixed(2)}</p>
-                <button type="button" onClick={() => setWithdrawModalOpen(true)} className="mt-5 flex h-10 items-center gap-2 rounded-lg bg-teal-800 px-4 text-sm font-bold text-white transition hover:bg-teal-900"><CreditCard size={16} /> Withdraw</button>
+                <div className="mt-4 space-y-1 text-sm text-slate-700">
+                  <p><span className="font-semibold">Available Balance:</span> ₹{accountWallet.balance.toFixed(2)}</p>
+                  <p><span className="font-semibold">Minimum Withdrawal:</span> ₹100</p>
+                </div>
+                <button type="button" onClick={() => setWithdrawModalOpen(true)} disabled={accountWallet.balance < 100} className="mt-4 flex h-10 items-center gap-2 rounded-lg bg-teal-800 px-4 text-sm font-bold text-white transition hover:bg-teal-900 disabled:cursor-not-allowed disabled:opacity-50"><CreditCard size={16} /> Withdraw to UPI/Bank</button>
               </div>
               <div className="grid grid-cols-2 divide-x divide-slate-100 sm:grid-cols-3">
                 <div className="p-5"><p className="text-xs font-semibold text-slate-500">Your post views</p><p className="mt-1 text-xl font-bold text-slate-900">{userTotalViews.toLocaleString()}</p></div>
@@ -1395,6 +1618,17 @@ function SocialApp() {
                 <div className="col-span-2 border-t border-slate-100 p-5 sm:col-span-1 sm:border-l-0 sm:border-t-0"><p className="text-xs font-semibold text-slate-500">Reward conversion</p><p className="mt-1 text-xl font-bold text-slate-900">100 points <span className="text-sm font-medium text-slate-500">= ₹10</span></p></div>
               </div>
             </section>
+
+            <div className="grid grid-cols-2 gap-3" aria-live="polite">
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <p className="text-xs font-semibold text-slate-500">Followers</p>
+                <p className="mt-1 text-xl font-bold text-slate-900">{followersCount.toLocaleString()}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <p className="text-xs font-semibold text-slate-500">Following</p>
+                <p className="mt-1 text-xl font-bold text-slate-900">{followingCount.toLocaleString()}</p>
+              </div>
+            </div>
 
             <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_3px_16px_rgba(31,41,55,0.035)] sm:p-6">
               <div className="flex items-start justify-between gap-4"><div><h2 className="font-bold text-slate-900">My Referral Link</h2><p className="mt-1 text-sm text-slate-500">You and your friend earn 100 Blue Points (₹10) when they join using your link.</p></div><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700"><Users size={20} /></span></div>
@@ -1551,7 +1785,7 @@ function SocialApp() {
           onClose={() => setWithdrawModalOpen(false)}
           onSubmitted={async () => {
             await refreshAccountData()
-            setNotice('Withdraw request sent! Bank me 24hr me ayega')
+            setNotice('Withdrawal request submitted for manual payment.')
           }}
         />
       )}
@@ -1577,6 +1811,7 @@ function App() {
     setShowOnboarding(false)
   }
 
+  if (window.location.pathname === '/admin') return <AdminWithdrawals />
   if (window.location.pathname === '/admin-payouts') return <AdminPayouts />
   if (showOnboarding) return <Onboarding onComplete={completeOnboarding} />
   return <SocialApp />

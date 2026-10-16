@@ -83,9 +83,8 @@ BEGIN
 END;
 $$;
 
-CREATE POLICY likes_select_own
-  ON public.likes FOR SELECT TO authenticated
-  USING (auth.uid() = user_id);
+CREATE POLICY "public read likes"
+  ON public.likes FOR SELECT USING (true);
 CREATE POLICY likes_insert_own
   ON public.likes FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = user_id);
@@ -93,7 +92,8 @@ CREATE POLICY likes_delete_own
   ON public.likes FOR DELETE TO authenticated
   USING (auth.uid() = user_id);
 
-GRANT SELECT, INSERT, DELETE ON public.likes TO authenticated;
+GRANT SELECT ON public.likes TO anon, authenticated;
+GRANT INSERT, DELETE ON public.likes TO authenticated;
 DO $$
 DECLARE
   likes_id_sequence text;

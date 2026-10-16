@@ -35,6 +35,11 @@ $$;
 ALTER TABLE public.comments ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow all for authenticated" ON public.comments;
+DROP POLICY IF EXISTS "public read comments" ON public.comments;
+CREATE POLICY "public read comments"
+  ON public.comments
+  FOR SELECT
+  USING (true);
 CREATE POLICY "Allow all for authenticated"
   ON public.comments
   FOR ALL
@@ -42,7 +47,8 @@ CREATE POLICY "Allow all for authenticated"
   USING (true)
   WITH CHECK (true);
 
-GRANT ALL ON public.comments TO authenticated;
+GRANT SELECT ON public.comments TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.comments TO authenticated;
 
 DO $$
 DECLARE

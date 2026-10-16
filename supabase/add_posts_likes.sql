@@ -68,15 +68,17 @@ DROP POLICY IF EXISTS "users manage own likes" ON public.likes;
 DROP POLICY IF EXISTS "users create own likes" ON public.likes;
 DROP POLICY IF EXISTS "users remove own likes" ON public.likes;
 DROP POLICY IF EXISTS "likes_select_all" ON public.likes;
+DROP POLICY IF EXISTS "public read likes" ON public.likes;
 DROP POLICY IF EXISTS "likes_insert_own" ON public.likes;
 DROP POLICY IF EXISTS "likes_delete_own" ON public.likes;
-CREATE POLICY "users read own likes"
-  ON public.likes FOR SELECT TO authenticated USING (auth.uid() = user_id);
+CREATE POLICY "public read likes"
+  ON public.likes FOR SELECT USING (true);
 CREATE POLICY "users create own likes"
   ON public.likes FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "users remove own likes"
   ON public.likes FOR DELETE TO authenticated USING (auth.uid() = user_id);
-GRANT SELECT, INSERT, DELETE ON public.likes TO authenticated;
+GRANT SELECT ON public.likes TO anon, authenticated;
+GRANT INSERT, DELETE ON public.likes TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.sync_post_like_count()
 RETURNS trigger

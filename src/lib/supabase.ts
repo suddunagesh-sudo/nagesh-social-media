@@ -28,6 +28,14 @@ export type PostProfile = {
   username: string | null
 }
 
+export type PostComment = {
+  id: number | string
+  content: string
+  userId: string
+  userName: string
+  createdAt: string
+}
+
 export type SocialPost = {
   id: number | string
   user_id: string | null
@@ -39,7 +47,7 @@ export type SocialPost = {
   shareCount: number
   photo?: string
   mediaType?: 'image' | 'video'
-  comments?: string[]
+  comments?: PostComment[]
   profiles: PostProfile | null
 }
 
@@ -47,7 +55,8 @@ export type SupabaseStory = {
   id?: number | string
   name: string
   image: string
-  mediaType?: 'image' | 'video'
+  mediaType?: 'photo' | 'video'
+  avatarUrl?: string
   color: string
 }
 
@@ -117,31 +126,29 @@ function mapPost(record: Record<string, unknown>): SocialPost {
     shareCount: typeof record.share_count === 'number' ? record.share_count : 0,
     photo: mediaUrl,
     mediaType,
-    comments: Array.isArray(record.comments)
-      ? record.comments.filter((comment): comment is string => typeof comment === 'string')
-      : [],
+    comments: [],
     profiles,
   }
 }
 
-async function uploadPhoto(file: File, folder: 'posts' | 'stories'): Promise<string> {
-  const fileName = `${folder}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`
-  const { data, error } = await supabase.storage.from('post-images').upload(fileName, file, {
+async function uploadMedia(file: File, bucket: 'post-images' | 'stories', path: string): Promise<string> {
+  const fileName = `${path}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`
+  const { data, error } = await supabase.storage.from(bucket).upload(fileName, file, {
     cacheControl: '3600',
     contentType: file.type,
     upsert: false,
   })
   if (error) throw error
 
-  return supabase.storage.from('post-images').getPublicUrl(data.path).data.publicUrl
+  return supabase.storage.from(bucket).getPublicUrl(data.path).data.publicUrl
 }
 
 export async function uploadPostPhoto(file: File): Promise<string> {
-  return uploadPhoto(file, 'posts')
+  return uploadMedia(file, 'post-images', 'posts')
 }
 
-export async function uploadStoryPhoto(file: File): Promise<string> {
-  return uploadPhoto(file, 'stories')
+export async function uploadStoryMedia(file: File, userId: string): Promise<string> {
+  return uploadMedia(file, 'stories', userId)
 }
 
 export async function uploadAvatar(file: File): Promise<string> {
@@ -172,30 +179,69 @@ export async function fetchPosts(): Promise<SocialPost[]> {
   const posts = (data ?? []).map((record) => mapPost(record as Record<string, unknown>))
   if (posts.length === 0) return posts
 
-  const commentsByPost = new Map<string, string[]>()
-  try {
-    const { data: commentRows, error: commentsError } = await supabase
-      .from('comments')
-      .select('post_id, content')
-      .in('post_id', posts.map((post) => post.id))
-      .order('created_at', { ascending: true })
-    if (commentsError) throw commentsError
-
-    for (const comment of commentRows ?? []) {
-      const postId = String(comment.post_id)
-      const existingComments = commentsByPost.get(postId) ?? []
-      existingComments.push(comment.content)
-      commentsByPost.set(postId, existingComments)
-    }
-  } catch (error) {
-    console.error('Post comments could not be loaded:', error)
-  }
-  const postsWithComments = posts.map((post) => ({
+  const [commentsByPost, likeCounts] = await Promise.all([
+    fetchCommentsByPost(posts.map((post) => post.id)),
+    Promise.all(posts.map(async (post) => [String(post.id), await fetchPostLikeCount(post.id)] as const)),
+  ])
+  const likeCountsByPost = new Map(likeCounts)
+  return posts.map((post) => ({
     ...post,
+    likes: likeCountsByPost.get(String(post.id)) ?? 0,
     comments: commentsByPost.get(String(post.id)) ?? [],
   }))
-  console.log('Posts:', postsWithComments)
-  return postsWithComments
+}
+
+async function fetchCommentsByPost(postIds: (number | string)[]): Promise<Map<string, PostComment[]>> {
+  const commentsByPost = new Map<string, PostComment[]>()
+  if (postIds.length === 0) return commentsByPost
+
+  const { data: commentRows, error: commentsError } = await supabase
+      .from('comments')
+      .select('*')
+      .in('post_id', postIds)
+      .order('created_at', { ascending: true })
+  if (commentsError) throw commentsError
+
+  const userIds = [...new Set((commentRows ?? [])
+    .map((comment) => comment.user_id)
+    .filter((userId): userId is string => typeof userId === 'string'))]
+  const { data: profiles, error: profilesError } = userIds.length
+    ? await supabase.from('profiles').select('id, full_name, username').in('id', userIds)
+    : { data: [], error: null }
+  if (profilesError) throw profilesError
+
+  const profilesById = new Map((profiles ?? []).map((profile) => [
+    profile.id,
+    profile.full_name || profile.username || 'Unknown User',
+  ]))
+  for (const comment of commentRows ?? []) {
+    const postId = String(comment.post_id)
+    const userId = typeof comment.user_id === 'string' ? comment.user_id : ''
+    const postComments = commentsByPost.get(postId) ?? []
+    postComments.push({
+      id: typeof comment.id === 'number' || typeof comment.id === 'string' ? comment.id : `${postId}-${postComments.length}`,
+      content: typeof comment.content === 'string' ? comment.content : '',
+      userId,
+      userName: profilesById.get(userId) ?? 'Unknown User',
+      createdAt: typeof comment.created_at === 'string' ? comment.created_at : '',
+    })
+    commentsByPost.set(postId, postComments)
+  }
+  return commentsByPost
+}
+
+export async function fetchPostLikeCount(postId: number | string): Promise<number> {
+  const { count, error } = await supabase
+    .from('likes')
+    .select('*', { count: 'exact', head: true })
+    .eq('post_id', postId)
+  if (error) throw error
+  return count ?? 0
+}
+
+export async function fetchPostComments(postId: number | string): Promise<PostComment[]> {
+  const commentsByPost = await fetchCommentsByPost([postId])
+  return commentsByPost.get(String(postId)) ?? []
 }
 
 export async function fetchStories(): Promise<SupabaseStory[]> {
@@ -210,7 +256,7 @@ export async function fetchStories(): Promise<SupabaseStory[]> {
     .map((record) => record.user_id)
     .filter((userId): userId is string => typeof userId === 'string'))]
   const { data: profileData, error: profileError } = userIds.length
-    ? await supabase.from('profiles').select('id, full_name, username').in('id', userIds)
+    ? await supabase.from('profiles').select('id, full_name, username, avatar_url').in('id', userIds)
     : { data: [], error: null }
   if (profileError) throw profileError
 
@@ -229,30 +275,37 @@ export async function fetchStories(): Promise<SupabaseStory[]> {
             ? record.name
             : 'Unknown User',
       image,
-      mediaType: record.media_type === 'video' || /\.(mp4|webm|ogg)(\?|$)/i.test(image) ? 'video' : 'image',
+      mediaType: record.media_type === 'video' || /\.(mp4|webm|ogg)(\?|$)/i.test(image) ? 'video' : 'photo',
+      avatarUrl: typeof storyProfile?.avatar_url === 'string' ? storyProfile.avatar_url : undefined,
       color: ['bg-amber-500', 'bg-rose-500', 'bg-emerald-600'][index % 3],
     }
   }).filter((story) => story.image)
 }
 
-export async function createStory(name: string, imageUrl: string): Promise<SupabaseStory> {
+export async function createStory(
+  name: string,
+  mediaUrl: string,
+  mediaType: 'photo' | 'video',
+  avatarUrl?: string,
+): Promise<SupabaseStory> {
   const { data: authData, error: authError } = await supabase.auth.getUser()
   if (authError) throw authError
   if (!authData.user) throw new Error('Sign in to publish a story.')
 
   const { data, error } = await supabase.from('stories').insert({
     user_id: authData.user.id,
-    image_url: imageUrl,
-    media_url: imageUrl,
-    media_type: 'image',
+    image_url: mediaUrl,
+    media_url: mediaUrl,
+    media_type: mediaType,
   }).select('id, image_url, media_url, video_url, media_type, created_at').single()
   if (error) throw error
 
   return {
     id: data.id,
     name,
-    image: data.media_url || data.image_url || imageUrl,
-    mediaType: 'image',
+    image: data.media_url || data.video_url || data.image_url || mediaUrl,
+    mediaType,
+    avatarUrl,
     color: 'bg-teal-600',
   }
 }
@@ -288,10 +341,10 @@ export async function fetchProfiles(): Promise<{ directory: PublicProfile[]; pro
     .from('profiles')
     .select('id, full_name, username, bio, avatar_url, referral_code, referred_by')
     .eq('id', user.id)
-    .single()
+    .maybeSingle()
   if (profileError) throw profileError
 
-  const profile = toProfile(profileData)
+  const profile = profileData ? toProfile(profileData) : null
   console.log('My Profile:', profileData)
 
   return {
@@ -423,46 +476,72 @@ export async function incrementPostShareCount(postId: number | string): Promise<
 }
 
 export async function fetchAccountWallet(userId: string): Promise<AccountWallet> {
-  const readAccount = () => supabase
-    .from('accounts')
-    .select('balance, blue_points')
+  const [walletResult, ledgerResult, withdrawalsResult, accountResult] = await Promise.all([
+    supabase
+      .from('wallets')
+      .select('balance')
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabase
+      .from('reward_ledger')
+      .select('amount_delta')
+      .eq('user_id', userId),
+    supabase
+      .from('withdrawals')
+      .select('amount')
+      .eq('user_id', userId)
+      .in('status', ['pending', 'paid']),
+    supabase
+      .from('accounts')
+      .select('blue_points')
+      .eq('id', userId)
+      .maybeSingle(),
+  ])
+  if (walletResult.error) throw walletResult.error
+  if (ledgerResult.error) throw ledgerResult.error
+  if (withdrawalsResult.error) throw withdrawalsResult.error
+  if (accountResult.error) throw accountResult.error
+
+  if (!walletResult.data) {
+    const { error: walletInsertError } = await supabase
+      .from('wallets')
+      .upsert({ user_id: userId, balance: 0 }, { onConflict: 'user_id', ignoreDuplicates: true })
+    if (walletInsertError) throw walletInsertError
+  }
+
+  const earnedBalance = (ledgerResult.data ?? []).reduce((total, entry) => total + Number(entry.amount_delta ?? 0), 0)
+  const withdrawnBalance = (withdrawalsResult.data ?? []).reduce((total, withdrawal) => total + Number(withdrawal.amount ?? 0), 0)
+  return {
+    balance: Math.max(0, earnedBalance - withdrawnBalance),
+    bluePoints: Number(accountResult.data?.blue_points ?? 0),
+  }
+}
+
+export async function fetchProfileById(userId: string): Promise<PublicProfile> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, full_name, username, bio, avatar_url, referral_code, referred_by')
     .eq('id', userId)
     .maybeSingle()
-  const { data, error } = await readAccount()
-  if (!error && data) {
+  if (error) throw error
+  if (!data) {
     return {
-      balance: Number(data.balance ?? 0),
-      bluePoints: Number(data.blue_points ?? 0),
+      id: userId,
+      fullName: '',
+      bio: '',
+      avatarUrl: '',
+      referredBy: null,
     }
   }
-
-  const { data: upsertedAccount, error: upsertError } = await supabase
-    .from('accounts')
-    .upsert(
-      { id: userId, blue_points: 0, balance: 0 },
-      { onConflict: 'id', ignoreDuplicates: true },
-    )
-    .select('balance, blue_points')
-    .maybeSingle()
-  if (upsertError) {
-    console.error('Account row could not be created or loaded:', { selectError: error, upsertError })
-    throw new Error('Account data could not be loaded.')
-  }
-
-  if (upsertedAccount) {
-    return {
-      balance: Number(upsertedAccount.balance ?? 0),
-      bluePoints: Number(upsertedAccount.blue_points ?? 0),
-    }
-  }
-
-  const { data: existingAccount, error: retryError } = await readAccount()
-  if (retryError) throw retryError
-  if (!existingAccount) throw new Error('Account row was not returned after upsert.')
 
   return {
-    balance: Number(existingAccount.balance ?? 0),
-    bluePoints: Number(existingAccount.blue_points ?? 0),
+    id: data.id,
+    fullName: data.full_name ?? '',
+    username: data.username ?? undefined,
+    bio: data.bio ?? '',
+    avatarUrl: data.avatar_url ?? '',
+    referralCode: data.referral_code ?? undefined,
+    referredBy: data.referred_by ?? null,
   }
 }
 
@@ -477,44 +556,44 @@ export async function fetchReferralCount(userId: string): Promise<number> {
 
 export async function fetchPayoutHistory(userId: string): Promise<PayoutRequest[]> {
   const { data, error } = await supabase
-    .from('withdrawal_requests')
-    .select('*')
+    .from('withdrawals')
+    .select('*, profiles(full_name)')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map((request) => {
     const row = request as Record<string, unknown>
+    const relatedProfile = row.profiles
+    const profileRecord = Array.isArray(relatedProfile) ? relatedProfile[0] : relatedProfile
     return {
       id: typeof row.id === 'string' || typeof row.id === 'number' ? row.id : '',
-      name: typeof row.name === 'string'
-        ? row.name
-        : typeof row.user_name === 'string'
-          ? row.user_name
-          : '',
-      upiOrAccount: typeof row.upi_or_account === 'string'
-        ? row.upi_or_account
-        : typeof row.upi_id === 'string'
-          ? row.upi_id
-          : '',
+      name: profileRecord && typeof profileRecord === 'object' && typeof profileRecord.full_name === 'string'
+        ? profileRecord.full_name
+        : '',
+      upiOrAccount: typeof row.upi_id === 'string' ? row.upi_id : '',
       ifsc: typeof row.ifsc === 'string' ? row.ifsc : null,
       amount: Number(row.amount ?? 0),
-      status: row.status as PayoutRequest['status'],
+      status: row.status === 'paid' || row.status === 'rejected' ? row.status : 'pending',
       createdAt: typeof row.created_at === 'string' ? row.created_at : '',
     }
   })
 }
 
-export async function requestPayout(request: {
-  name: string
+export async function createWithdrawalRequest(request: {
   amount: number
-  upiOrAccount: string
+  upiId: string
   ifsc: string | null
 }): Promise<void> {
-  const { error } = await supabase.rpc('request_payout', {
-    p_name: request.name,
-    p_amount: request.amount,
-    p_upi_or_account: request.upiOrAccount,
-    p_ifsc: request.ifsc,
+  const { data: authData, error: authError } = await supabase.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in to request a withdrawal.')
+
+  const { error } = await supabase.from('withdrawals').insert({
+    user_id: authData.user.id,
+    amount: request.amount,
+    upi_id: request.upiId,
+    ifsc: request.ifsc,
+    status: 'pending',
   })
   if (error) throw error
 }
@@ -618,12 +697,9 @@ export async function setPostLiked(postId: number | string, isLiked: boolean): P
       .eq('user_id', authData.user.id)
     if (error) throw error
   } else {
-    const { error } = await supabase.from('likes').upsert({
+    const { error } = await supabase.from('likes').insert({
       user_id: authData.user.id,
       post_id: postId,
-    }, {
-      onConflict: 'post_id,user_id',
-      ignoreDuplicates: true,
     })
     if (error) throw error
   }
