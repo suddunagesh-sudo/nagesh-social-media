@@ -9,6 +9,7 @@ import {
   fetchProfileById,
   fetchPostComments,
   fetchPostLikeCount,
+  fetchPostEarnings,
   fetchNotifications,
   fetchPayoutHistory,
   fetchPosts,
@@ -45,6 +46,7 @@ import WithdrawModal from './components/WithdrawModal'
 import Onboarding from './components/Onboarding'
 import SettingsPage from './components/SettingsPage'
 import {
+  ArrowLeft,
   Bell,
   Bookmark,
   Camera,
@@ -232,7 +234,7 @@ function PostCard({
   }, [optionsOpen])
 
   const displayViews = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(post.views)
-  const postEarnings = post.likes / 10
+  const postEarnings = post.earnedAmount
   const authorName = post.profiles?.full_name || post.profiles?.username || 'Unknown User'
   const authorAvatar = post.profiles?.avatar_url || undefined
   const isOwnPost = post.user_id === currentUserId || post.profiles?.id === currentUserId
@@ -280,8 +282,8 @@ function PostCard({
         : <img src={post.photo} alt={`Photo shared by ${authorName}`} loading="lazy" className="max-h-[560px] w-full bg-slate-100 object-contain" />)}
       <div className="mx-5 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-[#f4f8f7] px-3 py-2 text-[11px] font-semibold text-slate-600 sm:text-xs">
         <span>👁️ {displayViews} Views</span><span className="text-slate-300">|</span>
-        <span>💙 {post.views.toLocaleString()} Blue</span><span className="text-slate-300">|</span>
-        <span className="text-teal-800">₹{postEarnings.toFixed(2)} Earned</span>
+        <span>💙 {post.views.toLocaleString()} Blue</span>
+        {post.user_id === currentUserId && <><span className="text-slate-300">|</span><span className="text-teal-800">₹{postEarnings.toFixed(2)} Earned</span></>}
       </div>
 
       <div className="mx-5 flex items-center justify-between border-b border-slate-100 pb-3 text-xs text-slate-500">
@@ -475,6 +477,13 @@ function SocialApp() {
   const currentUserId = authUserId
   const isSiteOwner = profile.fullName === SITE_OWNER_NAME
   const ownProfileId = page === 'profile' ? currentUserId : ''
+  const isPostDetailRoute = /^\/post\/[^/]+\/?$/.test(window.location.pathname)
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 3000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
   const refreshFollowData = useCallback(async () => {
     if (!ownProfileId) {
@@ -557,6 +566,7 @@ function SocialApp() {
   const postMediaInputRef = useRef<HTMLInputElement>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const postOwnersRef = useRef(new Map(posts.map((post) => [post.id, post.user])))
+  const postOwnerIdsRef = useRef(new Map(posts.map((post) => [post.id, post.user_id])))
   const pendingLikePostIdsRef = useRef(new Set<number | string>())
   const userTotalViews = posts
     .filter((post) => post.user_id === currentUserId)
@@ -669,6 +679,18 @@ function SocialApp() {
     setReferralCount(referrals)
   }, [currentUserId])
 
+  const refreshPostEarnings = useCallback(async (postId: number | string, postOwnerId: string | null) => {
+    if (!currentUserId || postOwnerId !== currentUserId) return
+    try {
+      const earningsByPost = await fetchPostEarnings([postId])
+      const earnedAmount = earningsByPost.get(String(postId)) ?? 0
+      setPosts((currentPosts) => currentPosts.map((post) => post.id === postId ? { ...post, earnedAmount } : post))
+      await refreshAccountData()
+    } catch (error) {
+      console.error('Post earnings could not be refreshed:', error)
+    }
+  }, [currentUserId, refreshAccountData])
+
   useEffect(() => {
     let active = true
     const loadSignedInProfile = async () => {
@@ -717,6 +739,9 @@ function SocialApp() {
 
   useEffect(() => {
     if (!currentUserId) return
+    const refresh = () => {
+      void refreshAccountData().catch((error: unknown) => console.error('Wallet could not be refreshed:', error))
+    }
     const channel = supabase.channel(`wallet-ledger-${currentUserId}`)
       .on('postgres_changes', {
         event: '*',
@@ -724,8 +749,22 @@ function SocialApp() {
         table: 'reward_ledger',
         filter: `user_id=eq.${currentUserId}`,
       }, () => {
-        void refreshAccountData().catch((error: unknown) => console.error('Wallet could not be refreshed:', error))
+        void Promise.all([
+          refreshAccountData(),
+          fetchPostEarnings([...postOwnerIdsRef.current.keys()]),
+        ]).then(([_, earningsByPost]) => {
+          setPosts((currentPosts) => currentPosts.map((post) => ({
+            ...post,
+            earnedAmount: earningsByPost.get(String(post.id)) ?? 0,
+          })))
+        }).catch((error: unknown) => console.error('Wallet earnings could not be refreshed:', error))
       })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'withdrawals',
+        filter: `user_id=eq.${currentUserId}`,
+      }, refresh)
       .subscribe()
     return () => {
       void supabase.removeChannel(channel)
@@ -734,6 +773,7 @@ function SocialApp() {
 
   useEffect(() => {
     postOwnersRef.current = new Map(posts.map((post) => [post.id, post.user]))
+    postOwnerIdsRef.current = new Map(posts.map((post) => [post.id, post.user_id]))
   }, [posts])
 
   useEffect(() => {
@@ -897,10 +937,11 @@ function SocialApp() {
     setPosts((currentPosts) => currentPosts.map((post) => post.id === postId ? { ...post, views: post.views + 1 } : post))
     try {
       await incrementPostViews(postId)
+      await refreshPostEarnings(postId, postOwnerIdsRef.current.get(postId) ?? null)
     } catch (error) {
       console.error('Post view could not be recorded:', error)
     }
-  }, [])
+  }, [refreshPostEarnings])
 
   const addPost = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -947,7 +988,6 @@ function SocialApp() {
       setNotice(error instanceof Error ? error.message : 'Post could not be saved to Supabase.')
     } finally {
       setUploadingPhoto(false)
-      window.setTimeout(() => setNotice(''), 4000)
     }
   }
 
@@ -984,7 +1024,6 @@ function SocialApp() {
       console.error('Post could not be deleted:', error)
       setNotice(error instanceof Error ? error.message : 'Post could not be deleted.')
     }
-    window.setTimeout(() => setNotice(''), 3000)
   }
 
   const openPostEditor = (post: Post) => {
@@ -1015,7 +1054,6 @@ function SocialApp() {
       setNotice(error instanceof Error ? error.message : 'Post could not be updated.')
     } finally {
       setSavingPost(false)
-      window.setTimeout(() => setNotice(''), 3000)
     }
   }
 
@@ -1028,7 +1066,6 @@ function SocialApp() {
       console.error('Post link could not be copied:', error)
       setNotice('Could not copy the post link in this browser.')
     }
-    window.setTimeout(() => setNotice(''), 3000)
   }
 
   const copyReferralLink = async () => {
@@ -1043,7 +1080,6 @@ function SocialApp() {
       console.error('Referral link could not be copied:', error)
       setNotice('Could not copy your referral link in this browser.')
     }
-    window.setTimeout(() => setNotice(''), 3000)
   }
 
   const toggleLike = async (id: number | string) => {
@@ -1068,6 +1104,7 @@ function SocialApp() {
       setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
         ? { ...currentPost, likes }
         : currentPost))
+      await refreshPostEarnings(id, post.user_id)
       if (!alreadyLiked && post.user_id) {
         try {
           await createNotification({ recipientId: post.user_id, postId: id, type: 'like' })
@@ -1095,6 +1132,7 @@ function SocialApp() {
         ? { ...post, comments }
         : post))
       const post = posts.find((currentPost) => currentPost.id === postId)
+      await refreshPostEarnings(postId, post?.user_id ?? null)
       let notificationFailed = false
       if (post?.user_id) {
         try {
@@ -1188,7 +1226,6 @@ function SocialApp() {
       setNotice(error instanceof Error ? error.message : 'Story could not be uploaded.')
     } finally {
       setUploadingStory(false)
-      window.setTimeout(() => setNotice(''), 4000)
     }
   }
 
@@ -1248,7 +1285,6 @@ function SocialApp() {
       setNotice(error instanceof Error ? error.message : 'Profile could not be saved to Supabase.')
     } finally {
       setSavingProfile(false)
-      window.setTimeout(() => setNotice(''), 2600)
     }
   }
 
@@ -1271,6 +1307,7 @@ function SocialApp() {
         setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === post.id
           ? { ...currentPost, shareCount: currentPost.shareCount + 1 }
           : currentPost))
+        await refreshPostEarnings(post.id, post.user_id)
       } catch (countError) {
         console.error('Post share count could not be updated:', countError)
         setNotice('Post shared, but its share count could not be updated.')
@@ -1283,7 +1320,6 @@ function SocialApp() {
         setNotice('Sharing is not available in this browser.')
       }
     }
-    window.setTimeout(() => setNotice(''), 2400)
   }
 
   const toggleNotifications = async () => {
@@ -1487,6 +1523,10 @@ function SocialApp() {
         </aside>
 
         <main id="home" className="min-w-0 space-y-5">
+          {isPostDetailRoute && <button type="button" onClick={() => {
+            if (window.history.length > 1) window.history.back()
+            else window.location.assign('/')
+          }} className="inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-slate-600 hover:bg-white"><ArrowLeft size={16} /> Back</button>}
           {!currentUserId && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
             <h1 className="font-bold text-slate-900">{authMode === 'signin' ? 'Sign in to Nagesh Social' : 'Create your account'}</h1>
             <p className="mt-1 text-sm text-slate-600">{authMode === 'signin' ? 'Sign in to show your profile, publish posts, and like content.' : 'Join Nagesh Social and earn rewards when you are referred.'}</p>

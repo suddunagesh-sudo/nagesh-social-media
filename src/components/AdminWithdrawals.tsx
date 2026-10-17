@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, CheckCircle2 } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, XCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 const SITE_OWNER_NAME = 'Chhavinath Nagesh'
@@ -11,6 +11,7 @@ type Withdrawal = {
   upiId: string
   ifsc: string | null
   createdAt: string
+  status: 'pending' | 'approved'
 }
 
 export default function AdminWithdrawals() {
@@ -23,8 +24,8 @@ export default function AdminWithdrawals() {
   const loadPendingWithdrawals = useCallback(async () => {
     const { data, error } = await supabase
       .from('withdrawals')
-      .select('id, user_id, amount, upi_id, ifsc, created_at, profiles(full_name)')
-      .eq('status', 'pending')
+      .select('id, user_id, amount, upi_id, ifsc, status, created_at, profiles(full_name)')
+      .in('status', ['pending', 'approved'])
       .order('created_at', { ascending: true })
     if (error) throw error
 
@@ -38,6 +39,7 @@ export default function AdminWithdrawals() {
         upiId: row.upi_id,
         ifsc: row.ifsc,
         createdAt: row.created_at,
+        status: row.status,
       }
     }))
   }, [])
@@ -91,15 +93,20 @@ export default function AdminWithdrawals() {
     }
   }, [loadPendingWithdrawals])
 
-  const markPaid = async (id: string) => {
-    if (!window.confirm('Confirm that you have manually sent the payment before marking this request paid.')) return
+  const updateWithdrawalStatus = async (id: string, status: 'approved' | 'paid' | 'rejected', currentStatus: 'pending' | 'approved') => {
+    const prompt = status === 'paid'
+      ? 'Confirm that you have manually sent the payment before marking this request paid.'
+      : status === 'approved'
+        ? 'Approve this withdrawal for manual payment?'
+        : 'Reject this withdrawal and release the reserved balance?'
+    if (!window.confirm(prompt)) return
     setPendingId(id)
     try {
       const { data, error } = await supabase
         .from('withdrawals')
-        .update({ status: 'paid' })
+        .update({ status })
         .eq('id', id)
-        .eq('status', 'pending')
+        .eq('status', currentStatus)
         .select('id')
         .maybeSingle()
       if (error) throw error
@@ -107,8 +114,8 @@ export default function AdminWithdrawals() {
       await loadPendingWithdrawals()
       setErrorMessage('')
     } catch (error) {
-      console.error('Withdrawal could not be marked paid:', error)
-      setErrorMessage(error instanceof Error ? error.message : 'Withdrawal could not be marked paid.')
+      console.error('Withdrawal status could not be updated:', error)
+      setErrorMessage(error instanceof Error ? error.message : 'Withdrawal status could not be updated.')
     } finally {
       setPendingId(null)
     }
@@ -125,7 +132,7 @@ export default function AdminWithdrawals() {
             <p className="text-xs font-bold uppercase tracking-wider text-teal-800">Owner Dashboard</p>
             <h1 className="mt-1 text-2xl font-bold text-slate-900">Withdrawal requests</h1>
           </div>
-          <span className="text-sm font-semibold text-slate-500">{withdrawals.length} pending</span>
+          <span className="text-sm font-semibold text-slate-500">{withdrawals.filter((request) => request.status === 'pending').length} pending</span>
         </header>
 
         {errorMessage && <p role="alert" className="mt-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMessage}</p>}
@@ -147,6 +154,7 @@ export default function AdminWithdrawals() {
                   <th className="px-4 py-3 font-bold">IFSC</th>
                   <th className="px-4 py-3 font-bold">Amount</th>
                   <th className="px-4 py-3 font-bold">Requested</th>
+                  <th className="px-4 py-3 font-bold">Status</th>
                   <th className="px-4 py-3 font-bold">Action</th>
                 </tr>
               </thead>
@@ -158,10 +166,12 @@ export default function AdminWithdrawals() {
                     <td className="px-4 py-3">{withdrawal.ifsc ?? '—'}</td>
                     <td className="px-4 py-3 font-bold text-teal-800">₹{withdrawal.amount.toFixed(2)}</td>
                     <td className="px-4 py-3 text-slate-600">{new Date(withdrawal.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-3 capitalize">{withdrawal.status}</td>
                     <td className="px-4 py-3">
-                      <button type="button" onClick={() => void markPaid(withdrawal.id)} disabled={pendingId === withdrawal.id} className="inline-flex h-9 items-center gap-2 rounded-lg bg-emerald-700 px-3 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-50">
-                        <CheckCircle2 size={15} /> {pendingId === withdrawal.id ? 'Saving…' : 'Mark paid'}
-                      </button>
+                      <div className="flex gap-2">
+                        {withdrawal.status === 'pending' ? <button type="button" onClick={() => void updateWithdrawalStatus(withdrawal.id, 'approved', withdrawal.status)} disabled={pendingId === withdrawal.id} className="inline-flex h-9 items-center gap-2 rounded-lg bg-emerald-700 px-3 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-50"><CheckCircle2 size={15} /> Approve</button> : <button type="button" onClick={() => void updateWithdrawalStatus(withdrawal.id, 'paid', withdrawal.status)} disabled={pendingId === withdrawal.id} className="inline-flex h-9 items-center gap-2 rounded-lg bg-emerald-700 px-3 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-50"><CheckCircle2 size={15} /> Mark paid</button>}
+                        <button type="button" onClick={() => void updateWithdrawalStatus(withdrawal.id, 'rejected', withdrawal.status)} disabled={pendingId === withdrawal.id} className="inline-flex h-9 items-center gap-2 rounded-lg border border-rose-200 px-3 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50"><XCircle size={15} /> Reject</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -169,7 +179,7 @@ export default function AdminWithdrawals() {
             </table>
           </div>
         ) : null}
-        <p className="mt-4 text-xs leading-5 text-slate-500">Send payment manually using the listed UPI or bank details. Mark a request paid only after the transfer is complete. This dashboard does not initiate transfers.</p>
+        <p className="mt-4 text-xs leading-5 text-slate-500">Approve a request before manually sending payment. Mark approved requests paid only after the transfer is complete. Rejecting releases the reserved balance; this dashboard does not initiate transfers.</p>
       </div>
     </main>
   )

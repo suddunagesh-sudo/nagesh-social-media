@@ -45,6 +45,7 @@ export type SocialPost = {
   likes: number
   views: number
   shareCount: number
+  earnedAmount: number
   photo?: string
   mediaType?: 'image' | 'video'
   comments?: PostComment[]
@@ -81,7 +82,7 @@ export type PayoutRequest = {
   upiOrAccount: string
   ifsc: string | null
   amount: number
-  status: 'pending' | 'paid' | 'rejected'
+  status: 'pending' | 'approved' | 'paid' | 'rejected'
   createdAt: string
 }
 
@@ -124,6 +125,7 @@ function mapPost(record: Record<string, unknown>): SocialPost {
     likes: typeof record.likes === 'number' ? record.likes : 0,
     views: typeof record.views === 'number' ? record.views : 0,
     shareCount: typeof record.share_count === 'number' ? record.share_count : 0,
+    earnedAmount: Number(record.earned_amount ?? 0),
     photo: mediaUrl,
     mediaType,
     comments: [],
@@ -183,12 +185,37 @@ export async function fetchPosts(): Promise<SocialPost[]> {
     fetchCommentsByPost(posts.map((post) => post.id)),
     Promise.all(posts.map(async (post) => [String(post.id), await fetchPostLikeCount(post.id)] as const)),
   ])
+  const earningsByPost = await fetchPostEarnings(posts.map((post) => post.id))
   const likeCountsByPost = new Map(likeCounts)
   return posts.map((post) => ({
     ...post,
     likes: likeCountsByPost.get(String(post.id)) ?? 0,
+    earnedAmount: earningsByPost.get(String(post.id)) ?? 0,
     comments: commentsByPost.get(String(post.id)) ?? [],
   }))
+}
+
+export async function fetchPostEarnings(postIds: (number | string)[]): Promise<Map<string, number>> {
+  const earnings = new Map<string, number>()
+  if (postIds.length === 0) return earnings
+
+  const { data: authData, error: authError } = await supabase.auth.getUser()
+  if (authError && authError.name !== 'AuthSessionMissingError') throw authError
+  if (!authData.user) return earnings
+
+  const { data, error } = await supabase
+    .from('reward_ledger')
+    .select('event_key, amount_delta')
+    .eq('user_id', authData.user.id)
+  if (error) throw error
+
+  const requestedPostIds = new Set(postIds.map(String))
+  for (const entry of data ?? []) {
+    const match = /^(?:like|view|comment|share):([^:]+):/.exec(entry.event_key)
+    if (!match || !requestedPostIds.has(match[1])) continue
+    earnings.set(match[1], (earnings.get(match[1]) ?? 0) + Number(entry.amount_delta ?? 0))
+  }
+  return earnings
 }
 
 async function fetchCommentsByPost(postIds: (number | string)[]): Promise<Map<string, PostComment[]>> {
@@ -476,12 +503,7 @@ export async function incrementPostShareCount(postId: number | string): Promise<
 }
 
 export async function fetchAccountWallet(userId: string): Promise<AccountWallet> {
-  const [walletResult, ledgerResult, withdrawalsResult, accountResult] = await Promise.all([
-    supabase
-      .from('wallets')
-      .select('balance')
-      .eq('user_id', userId)
-      .maybeSingle(),
+  const [ledgerResult, withdrawalsResult, accountResult] = await Promise.all([
     supabase
       .from('reward_ledger')
       .select('amount_delta')
@@ -490,24 +512,16 @@ export async function fetchAccountWallet(userId: string): Promise<AccountWallet>
       .from('withdrawals')
       .select('amount')
       .eq('user_id', userId)
-      .in('status', ['pending', 'paid']),
+      .in('status', ['pending', 'approved', 'paid']),
     supabase
       .from('accounts')
       .select('blue_points')
       .eq('id', userId)
       .maybeSingle(),
   ])
-  if (walletResult.error) throw walletResult.error
   if (ledgerResult.error) throw ledgerResult.error
   if (withdrawalsResult.error) throw withdrawalsResult.error
   if (accountResult.error) throw accountResult.error
-
-  if (!walletResult.data) {
-    const { error: walletInsertError } = await supabase
-      .from('wallets')
-      .upsert({ user_id: userId, balance: 0 }, { onConflict: 'user_id', ignoreDuplicates: true })
-    if (walletInsertError) throw walletInsertError
-  }
 
   const earnedBalance = (ledgerResult.data ?? []).reduce((total, entry) => total + Number(entry.amount_delta ?? 0), 0)
   const withdrawnBalance = (withdrawalsResult.data ?? []).reduce((total, withdrawal) => total + Number(withdrawal.amount ?? 0), 0)
@@ -573,7 +587,7 @@ export async function fetchPayoutHistory(userId: string): Promise<PayoutRequest[
       upiOrAccount: typeof row.upi_id === 'string' ? row.upi_id : '',
       ifsc: typeof row.ifsc === 'string' ? row.ifsc : null,
       amount: Number(row.amount ?? 0),
-      status: row.status === 'paid' || row.status === 'rejected' ? row.status : 'pending',
+      status: row.status === 'approved' || row.status === 'paid' || row.status === 'rejected' ? row.status : 'pending',
       createdAt: typeof row.created_at === 'string' ? row.created_at : '',
     }
   })
