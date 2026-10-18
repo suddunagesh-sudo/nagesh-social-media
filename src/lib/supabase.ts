@@ -54,6 +54,7 @@ export type SocialPost = {
 
 export type SupabaseStory = {
   id?: number | string
+  userId?: string
   name: string
   image: string
   mediaType?: 'photo' | 'video'
@@ -294,6 +295,7 @@ export async function fetchStories(): Promise<SupabaseStory[]> {
     const storyProfile = typeof record.user_id === 'string' ? profilesById.get(record.user_id) : undefined
     return {
       id: record.id,
+      userId: typeof record.user_id === 'string' ? record.user_id : undefined,
       name: typeof storyProfile?.full_name === 'string'
         ? storyProfile.full_name
         : typeof storyProfile?.username === 'string'
@@ -329,6 +331,7 @@ export async function createStory(
 
   return {
     id: data.id,
+    userId: authData.user.id,
     name,
     image: data.media_url || data.video_url || data.image_url || mediaUrl,
     mediaType,

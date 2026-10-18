@@ -47,6 +47,8 @@ import Onboarding from './components/Onboarding'
 import SettingsPage from './components/SettingsPage'
 import {
   ArrowLeft,
+  ArrowRight,
+  ArrowUp,
   Bell,
   Bookmark,
   Camera,
@@ -79,6 +81,11 @@ type Post = SocialPost
 type Page = 'feed' | 'profile' | 'user-profile' | 'friends' | 'explore' | 'saved' | 'search' | 'settings'
 
 type Story = SupabaseStory
+type StoryGroup = {
+  key: string
+  name: string
+  stories: Story[]
+}
 
 type Profile = PublicProfile
 
@@ -439,7 +446,9 @@ function SocialApp() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [likedPosts, setLikedPosts] = useState<(number | string)[]>([])
   const [pendingLikePosts, setPendingLikePosts] = useState<(number | string)[]>([])
-  const [activeStory, setActiveStory] = useState<Story | null>(null)
+  const [activeStoryGroup, setActiveStoryGroup] = useState<StoryGroup | null>(null)
+  const [activeStoryIndex, setActiveStoryIndex] = useState(0)
+  const [showBackToTop, setShowBackToTop] = useState(false)
   const [myStory, setMyStory] = useState<Story | null>(null)
   const [uploadingStory, setUploadingStory] = useState(false)
   const [profileEditorOpen, setProfileEditorOpen] = useState(false)
@@ -478,6 +487,38 @@ function SocialApp() {
   const isSiteOwner = profile.fullName === SITE_OWNER_NAME
   const ownProfileId = page === 'profile' ? currentUserId : ''
   const isPostDetailRoute = /^\/post\/[^/]+\/?$/.test(window.location.pathname)
+  const activeStory = activeStoryGroup?.stories[activeStoryIndex] ?? null
+
+  const storyGroupsByUser = new Map<string, StoryGroup>()
+  stories.forEach((story, index) => {
+    const key = story.userId ? `user:${story.userId}` : `story:${story.id ?? index}`
+    const existingGroup = storyGroupsByUser.get(key)
+    if (existingGroup) {
+      existingGroup.stories.push(story)
+    } else {
+      storyGroupsByUser.set(key, { key, name: story.name, stories: [story] })
+    }
+  })
+  const storyGroups = [...storyGroupsByUser.values()]
+
+  const openStoryGroup = (group: StoryGroup) => {
+    setActiveStoryGroup(group)
+    setActiveStoryIndex(0)
+  }
+
+  const changeActiveStory = (offset: number) => {
+    if (!activeStoryGroup) return
+    setActiveStoryIndex((index) => Math.max(0, Math.min(activeStoryGroup.stories.length - 1, index + offset)))
+  }
+
+  useEffect(() => {
+    const updateBackToTopVisibility = () => {
+      setShowBackToTop(page === 'feed' && window.scrollY > 400)
+    }
+    window.addEventListener('scroll', updateBackToTopVisibility, { passive: true })
+    updateBackToTopVisibility()
+    return () => window.removeEventListener('scroll', updateBackToTopVisibility)
+  }, [page])
 
   useEffect(() => {
     if (!notice) return
@@ -1369,7 +1410,7 @@ function SocialApp() {
   const friends = new Map<string, Profile>()
   for (const publicProfile of directoryProfiles) friends.set(publicProfile.fullName, publicProfile)
   for (const post of posts) if (!friends.has(post.user)) friends.set(post.user, { fullName: post.user, bio: '', avatarUrl: '' })
-  for (const story of stories) if (!friends.has(story.name)) friends.set(story.name, { fullName: story.name, bio: '', avatarUrl: '' })
+  for (const group of storyGroups) if (!friends.has(group.name)) friends.set(group.name, { fullName: group.name, bio: '', avatarUrl: '' })
   const friendList = [...friends.values()].filter((friend) => friend.fullName !== profile.fullName)
   const savedPosts = posts.filter((post) => savedPostIds.includes(post.id))
 
@@ -1514,15 +1555,15 @@ function SocialApp() {
             <button type="button" onClick={() => setPage('settings')} className={`flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold ${page === 'settings' ? 'bg-teal-50 text-teal-800' : 'text-slate-600 transition hover:bg-white'}`}><SettingsIcon size={18} /> Settings</button>
             <div className="my-5 border-t border-slate-200" />
             <p className="px-3 pb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Your people</p>
-            {stories.map((story) => (
-              <button key={story.name} type="button" onClick={() => setActiveStory(story)} className="flex h-11 w-full items-center gap-3 rounded-xl px-2 text-left text-sm font-medium text-slate-700 transition hover:bg-white">
-                <span className={`flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-white ${story.color}`}>{getInitials(story.name)}</span>{story.name}
+            {storyGroups.map((group) => (
+              <button key={group.key} type="button" onClick={() => openStoryGroup(group)} className="flex h-11 w-full items-center gap-3 rounded-xl px-2 text-left text-sm font-medium text-slate-700 transition hover:bg-white">
+                <span className={`flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-white ${group.stories[0].color}`}>{getInitials(group.name)}</span>{group.name}
               </button>
             ))}
           </nav>
         </aside>
 
-        <main id="home" className="min-w-0 space-y-5">
+        <main id="home" className="mx-auto w-full min-w-0 max-w-[600px] space-y-5">
           {isPostDetailRoute && <button type="button" onClick={() => {
             if (window.history.length > 1) window.history.back()
             else window.location.assign('/')
@@ -1582,12 +1623,12 @@ function SocialApp() {
               </div>
             </div>
           </section> : page === 'feed' ? <>
-          <section aria-label="Stories" className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_3px_16px_rgba(31,41,55,0.035)] sm:p-5">
+          <section id="stories" aria-label="Stories" className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_3px_16px_rgba(31,41,55,0.035)] sm:p-5">
             <div className="mb-4 flex items-center justify-between">
               <div><h1 className="text-base font-bold text-slate-900">Stories</h1><p className="mt-0.5 text-xs text-slate-500">A glimpse into their day</p></div>
               <button type="button" onClick={() => fileInputRef.current?.click()} className="text-xs font-bold text-teal-700 hover:text-teal-900">See all</button>
             </div>
-            <div className="flex gap-3 overflow-x-auto pb-1">
+            <div className="flex min-w-0 max-w-full gap-3 overflow-x-auto pb-1">
               <button type="button" onClick={() => fileInputRef.current?.click()} className="group relative h-[164px] w-[104px] shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-left sm:h-[184px] sm:w-[116px]">
                 {myStory && (myStory.mediaType === 'video'
                   ? <video src={myStory.image} muted playsInline className="absolute inset-0 h-full w-full object-cover" />
@@ -1596,16 +1637,17 @@ function SocialApp() {
                 <span className="absolute left-1/2 top-1/2 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-teal-700 text-white shadow-md transition group-hover:scale-105"><Plus size={20} /></span>
                 <span className="absolute inset-x-1 bottom-2 text-center text-xs font-bold text-white">{uploadingStory ? 'Uploading...' : 'Create story'}</span>
               </button>
-              {stories.map((story) => (
-                <button key={story.name} type="button" onClick={() => setActiveStory(story)} className="group relative h-[164px] w-[104px] shrink-0 overflow-hidden rounded-xl bg-slate-300 text-left sm:h-[184px] sm:w-[116px]">
+              {storyGroups.map((group) => {
+                const story = group.stories[0]
+                return <button key={group.key} type="button" onClick={() => openStoryGroup(group)} className="group relative h-[164px] w-[104px] shrink-0 overflow-hidden rounded-xl bg-slate-300 text-left sm:h-[184px] sm:w-[116px]">
                   {story.mediaType === 'video'
                     ? <video src={story.image} muted playsInline className="absolute inset-0 h-full w-full object-cover" />
                     : <img src={story.image} alt="" className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-105" />}
                   <span className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/5 to-black/10" />
                   <span className="absolute left-2.5 top-2.5 rounded-full bg-teal-700 p-[2px]"><Avatar name={story.name} image={story.avatarUrl || '/default-avatar.png'} size="sm" /></span>
-                  <span className="absolute inset-x-2 bottom-2 text-xs font-bold leading-tight text-white">{story.name}</span>
+                  <span className="absolute inset-x-2 bottom-2 text-xs font-bold leading-tight text-white">{group.name}</span>
                 </button>
-              ))}
+              })}
             </div>
             <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={(event) => void handleStoryUpload(event)} className="hidden" aria-label="Upload a story image or video" />
           </section>
@@ -1717,11 +1759,11 @@ function SocialApp() {
             <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_3px_16px_rgba(31,41,55,0.035)]">
               <h2 className="text-sm font-bold text-slate-900">People you may know</h2>
               <div className="mt-4 space-y-4">
-                {stories.slice(0, 2).map((story) => (
-                  <div key={story.name} className="flex items-center gap-2.5">
-                    <Avatar name={story.name} size="sm" />
-                    <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-slate-800">{story.name}</p><p className="text-[11px] text-slate-500">Suggested for you</p></div>
-                    <button type="button" onClick={() => setNotice(`Friend request sent to ${story.name}.`)} className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-800 transition hover:bg-teal-100" aria-label={`Add ${story.name}`}><Plus size={17} /></button>
+                {storyGroups.slice(0, 2).map((group) => (
+                  <div key={group.key} className="flex items-center gap-2.5">
+                    <Avatar name={group.name} image={group.stories[0].avatarUrl} size="sm" />
+                    <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-slate-800">{group.name}</p><p className="text-[11px] text-slate-500">Suggested for you</p></div>
+                    <button type="button" onClick={() => setNotice(`Friend request sent to ${group.name}.`)} className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-800 transition hover:bg-teal-100" aria-label={`Add ${group.name}`}><Plus size={17} /></button>
                   </div>
                 ))}
               </div>
@@ -1737,7 +1779,7 @@ function SocialApp() {
         </aside>
       </div>
 
-      {notice && <div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-xl">{notice}</div>}
+      {notice && <div role="status" className="fixed bottom-20 left-1/2 z-50 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-xl md:bottom-5">{notice}</div>}
 
       {profileEditorOpen && (
         <div role="dialog" aria-modal="true" aria-label="Edit profile" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={() => setProfileEditorOpen(false)}>
@@ -1775,20 +1817,22 @@ function SocialApp() {
       )}
 
       {activeStory && (
-        <div role="dialog" aria-modal="true" aria-label={`${activeStory.name}'s story`} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4" onClick={() => setActiveStory(null)}>
+        <div role="dialog" aria-modal="true" aria-label={`${activeStory.name}'s story`} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4" onClick={() => setActiveStoryGroup(null)}>
           <div className="relative h-[min(78vh,680px)] w-full max-w-[390px] overflow-hidden rounded-2xl bg-slate-800" onClick={(event) => event.stopPropagation()}>
             <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent p-4">
-              <div className="flex items-center gap-2.5"><Avatar name={activeStory.name} size="sm" /><span className="text-sm font-bold text-white">{activeStory.name}</span><span className="text-xs text-white/75">2h</span></div>
-              <button type="button" onClick={() => setActiveStory(null)} className="flex h-9 w-9 items-center justify-center rounded-full bg-black/25 text-white" aria-label="Close story"><X size={20} /></button>
+              <div className="flex items-center gap-2.5"><Avatar name={activeStory.name} image={activeStory.avatarUrl} size="sm" /><span className="text-sm font-bold text-white">{activeStory.name}</span><span className="text-xs text-white/75">2h</span></div>
+              <button type="button" onClick={() => setActiveStoryGroup(null)} className="flex h-9 w-9 items-center justify-center rounded-full bg-black/25 text-white" aria-label="Close story"><X size={20} /></button>
             </div>
             <div className="absolute inset-x-4 top-4 z-10 flex gap-1.5">
-              {Array.from({ length: 6 }).map((_, index) => (
-                <span key={`${activeStory.id}-progress-${index}`} className={`h-1 flex-1 rounded-full ${index === 0 ? 'bg-white/95' : 'bg-white/30'}`} />
+              {activeStoryGroup?.stories.map((story, index) => (
+                <span key={`${story.id ?? index}-progress`} className={`h-1 flex-1 rounded-full ${index <= activeStoryIndex ? 'bg-white/95' : 'bg-white/30'}`} />
               ))}
             </div>
+            {activeStoryGroup && activeStoryIndex > 0 && <button type="button" onClick={() => changeActiveStory(-1)} className="absolute inset-y-14 left-0 z-10 flex w-14 items-center justify-center text-white/90" aria-label="Previous story"><ArrowLeft size={24} /></button>}
             {activeStory.mediaType === 'video'
               ? <video src={activeStory.image} autoPlay controls playsInline className="h-full w-full object-contain" />
               : <img src={activeStory.image} alt={`${activeStory.name}'s story`} className="h-full w-full object-cover" />}
+            {activeStoryGroup && activeStoryIndex < activeStoryGroup.stories.length - 1 && <button type="button" onClick={() => changeActiveStory(1)} className="absolute inset-y-14 right-0 z-10 flex w-14 items-center justify-center text-white/90" aria-label="Next story"><ArrowRight size={24} /></button>}
           </div>
         </div>
       )}
@@ -1829,6 +1873,11 @@ function SocialApp() {
           }}
         />
       )}
+      {showBackToTop && <button type="button" onClick={() => {
+        const storiesSection = document.getElementById('stories')
+        const storiesTop = storiesSection ? storiesSection.getBoundingClientRect().top + window.scrollY - 80 : 0
+        window.scrollTo({ top: Math.max(0, storiesTop), behavior: 'smooth' })
+      }} className="fixed bottom-20 right-4 z-50 flex items-center justify-center rounded-full bg-black p-3 text-white shadow-lg transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 md:bottom-8 md:right-8" aria-label="Back to top" title="Back to top"><ArrowUp size={21} /></button>}
     </div>
   )
 }
