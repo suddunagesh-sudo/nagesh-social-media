@@ -294,11 +294,11 @@ function PostCard({
       </div>
 
       <div className="mx-5 flex items-center justify-between border-b border-slate-100 pb-3 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-teal-600 text-white"><ThumbsUp size={11} fill="currentColor" /></span>{post.likes} likes</span>
+        <span className="flex items-center gap-1.5"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-teal-600 text-white"><ThumbsUp size={11} fill="currentColor" /></span>{post.likes.toLocaleString()} likes</span>
         <span>{post.comments?.length ? `${post.comments.length} comments` : 'No comments yet'}</span>
       </div>
       <div className="grid grid-cols-4 gap-1 px-3 py-2">
-        <button type="button" onClick={() => onLike(post.id)} disabled={isLikePending} aria-pressed={isLiked} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70 ${isLiked ? 'text-sky-600' : 'text-slate-600'}`}><ThumbsUp size={17} fill={isLiked ? 'currentColor' : 'none'} /> Like</button>
+        <button type="button" onClick={() => onLike(post.id)} disabled={isLikePending} aria-pressed={isLiked} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70 ${isLiked ? 'text-rose-600' : 'text-slate-600'}`}><ThumbsUp size={17} fill={isLiked ? 'currentColor' : 'none'} /> {isLiked ? 'Liked' : 'Like'}</button>
         <button type="button" onClick={() => document.getElementById(`comment-${post.id}`)?.focus()} className="flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold text-slate-600 transition hover:bg-slate-50"><MessageCircle size={17} /> Comment</button>
         <button type="button" onClick={() => onShare(post)} className="flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold text-slate-600 transition hover:bg-slate-50"><Share2 size={17} /> Share</button>
         <button type="button" onClick={() => onSave(post.id)} aria-label={isSaved ? 'Remove saved post' : 'Save post'} title={isSaved ? 'Remove saved post' : 'Save post'} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 ${isSaved ? 'text-teal-700' : 'text-slate-600'}`}><Bookmark size={17} fill={isSaved ? 'currentColor' : 'none'} /><span className="hidden sm:inline">Save</span></button>
@@ -1129,39 +1129,57 @@ function SocialApp() {
       return
     }
 
-    const alreadyLiked = likedPosts.includes(id)
+    const alreadyLiked = likedPosts.some((likedId) => String(likedId) === String(id))
     const post = posts.find((candidate) => candidate.id === id)
     if (!post || pendingLikePostIdsRef.current.has(id)) return
 
     pendingLikePostIdsRef.current.add(id)
     setPendingLikePosts((pending) => [...pending, id])
+    const likeDelta = alreadyLiked ? -1 : 1
+    setLikedPosts((currentLikes) => alreadyLiked
+      ? currentLikes.filter((likedId) => String(likedId) !== String(id))
+      : [...currentLikes.filter((likedId) => String(likedId) !== String(id)), id])
+    setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
+      ? { ...currentPost, likes: Math.max(0, currentPost.likes + likeDelta) }
+      : currentPost))
 
     try {
       await setPostLiked(id, alreadyLiked)
+    } catch (error) {
+      console.error('Your like could not be saved to the likes table:', error)
       setLikedPosts((currentLikes) => alreadyLiked
-        ? currentLikes.filter((likedId) => likedId !== id)
-        : [...currentLikes, id])
+        ? [...currentLikes.filter((likedId) => String(likedId) !== String(id)), id]
+        : currentLikes.filter((likedId) => String(likedId) !== String(id)))
+      setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
+        ? { ...currentPost, likes: Math.max(0, currentPost.likes - likeDelta) }
+        : currentPost))
+      setNotice(error instanceof Error
+        ? error.message
+        : 'Your like could not be saved.')
+      return
+    } finally {
+      pendingLikePostIdsRef.current.delete(id)
+      setPendingLikePosts((pending) => pending.filter((pendingId) => pendingId !== id))
+    }
+
+    try {
       const likes = await fetchPostLikeCount(id)
       setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
         ? { ...currentPost, likes }
         : currentPost))
-      await refreshPostEarnings(id, post.user_id)
-      if (!alreadyLiked && post.user_id) {
-        try {
-          await createNotification({ recipientId: post.user_id, postId: id, type: 'like' })
-        } catch (notificationError) {
-          console.log('Like notification unavailable:', notificationError)
-          setNotice('Your like was saved, but the post owner was not notified.')
-        }
-      }
     } catch (error) {
-      console.error('Your like could not be saved to the likes table:', error)
-      setNotice(error instanceof Error
-        ? error.message
-        : 'Your like could not be saved or refreshed.')
-    } finally {
-      pendingLikePostIdsRef.current.delete(id)
-      setPendingLikePosts((pending) => pending.filter((pendingId) => pendingId !== id))
+      console.error('The saved like count could not be refreshed:', error)
+      setNotice('Your like was saved, but the total count could not be refreshed.')
+    }
+
+    await refreshPostEarnings(id, post.user_id)
+    if (!alreadyLiked && post.user_id) {
+      try {
+        await createNotification({ recipientId: post.user_id, postId: id, type: 'like' })
+      } catch (notificationError) {
+        console.error('Like notification could not be sent:', notificationError)
+        setNotice('Your like was saved, but the post owner was not notified.')
+      }
     }
   }
 

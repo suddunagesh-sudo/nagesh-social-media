@@ -714,10 +714,12 @@ export async function setPostLiked(postId: number | string, isLiked: boolean): P
       .eq('user_id', authData.user.id)
     if (error) throw error
   } else {
-    const { error } = await supabase.from('likes').insert({
-      user_id: authData.user.id,
-      post_id: postId,
-    })
+    const { error } = await supabase
+      .from('likes')
+      .upsert({
+        user_id: authData.user.id,
+        post_id: postId,
+      }, { onConflict: 'post_id,user_id', ignoreDuplicates: true })
     if (error) throw error
   }
 }
