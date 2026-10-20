@@ -1,4 +1,4 @@
-name: Build lifetime Android AAB
+name: Build Android AAB
 
 on:
   workflow_dispatch:
@@ -12,38 +12,40 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Install Android SDK components
-        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
 
-      - name: Install JavaScript dependencies and sync Capacitor
+      - name: Install dependencies, build web app, and sync Capacitor
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
-          test -n "$VITE_SUPABASE_URL"
-          test -n "$VITE_SUPABASE_ANON_KEY"
-          npm ci
+          set -euo pipefail
+          test -n "$VITE_SUPABASE_URL" || { echo "Missing GitHub Actions secret: VITE_SUPABASE_URL" >&2; exit 1; }
+          test -n "$VITE_SUPABASE_ANON_KEY" || { echo "Missing GitHub Actions secret: VITE_SUPABASE_ANON_KEY" >&2; exit 1; }
+          npm install
           npm run build
-          npx cap sync android --inline
+          npx cap sync android
 
       - name: Prepare release signing key
-        shell: bash
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -60,12 +62,14 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release-key.jks"
           echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release-key.jks" >> "$GITHUB_ENV"
 
-      - name: Build release app bundle
-        run: bash android/gradlew bundleRelease --no-daemon --stacktrace
+      - name: Build release Android App Bundle
+        working-directory: android
+        run: bash ./gradlew bundleRelease --no-daemon --stacktrace
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Android App Bundle
+        uses: actions/upload-artifact@v4
         with:
-          name: lifetime-release-aab
+          name: android-release-aab
           path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 30
