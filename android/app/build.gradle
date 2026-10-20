@@ -114,13 +114,19 @@ android {
             def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: signingProperties.getProperty('storePassword')
             def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS') ?: signingProperties.getProperty('keyAlias')
             def releaseKeyPassword = System.getenv('ANDROID_KEY_PASSWORD') ?: signingProperties.getProperty('keyPassword')
-            if (!releaseStoreFile || !releaseStorePassword || !releaseKeyAlias || !releaseKeyPassword) {
+            def releaseSigningConfigured = releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+            def releaseTaskRequested = gradle.startParameter.taskNames.any {
+                it.toLowerCase(java.util.Locale.ROOT).contains('release')
+            }
+            if (!releaseSigningConfigured && releaseTaskRequested) {
                 throw new GradleException('Release signing is not configured. Set the release credentials in android/key.properties or the ANDROID_KEYSTORE_FILE, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD environment variables.')
             }
-            storeFile rootProject.file(releaseStoreFile)
-            storePassword releaseStorePassword
-            keyAlias releaseKeyAlias
-            keyPassword releaseKeyPassword
+            if (releaseSigningConfigured) {
+                storeFile rootProject.file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
         }
     }
     buildTypes {

@@ -1,15 +1,54 @@
-name: build aab
-on: [push]
+name: Build Android Debug AAB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: {node-version: 20}
+        with:
+          node-version: 20
+          cache: npm
+
       - uses: actions/setup-java@v5
-        with: {distribution: 'temurin', java-version: '17'}
-      - run: npm install
-      - run: cd android && chmod +x gradlew && ./gradlew bundleDebug --no-daemon
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle.properties', 'android/**/*.gradle*') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: Install Android SDK components
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Configure Android SDK
+        run: printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > android/local.properties
+
+      - name: Build debug AAB
+        run: cd android && chmod +x gradlew && ./gradlew bundleDebug --no-daemon
+
       - uses: actions/upload-artifact@v4
-        with: {name: my-aab, path: android/app/build/outputs/bundle/debug/*.aab}
+        with:
+          name: android-debug-aab
+          path: android/app/build/outputs/bundle/debug/app-debug.aab
+          if-no-files-found: error
+          retention-days: 30
