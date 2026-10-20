@@ -11,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
 
@@ -34,8 +37,10 @@ jobs:
 
       - name: Install Android SDK components
         run: |
-          sdkmanager --licenses <<< "$(printf 'y\n%.0s' {1..50})"
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+          sdkmanager_path="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          test -x "$sdkmanager_path"
+          yes | "$sdkmanager_path" --licenses >/dev/null
+          "$sdkmanager_path" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
 
       - name: Install dependencies
         run: npm install
