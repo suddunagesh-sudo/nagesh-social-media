@@ -1,14 +1,19 @@
 {
   "expo": {
-    "name": "Nagesh Social Media",
+    "name": "Nagesh Social Media - Lifetime Version",
     "slug": "nagesh-social-media",
     "version": "1.0.0",
     "platforms": [
       "android"
     ],
     "android": {
-      "package": "com.nageshsocial.media",
+      "package": "com.nageshsocial.lifetime",
       "versionCode": 1
+    },
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f766e"
     },
     "plugins": [
       "expo-router",

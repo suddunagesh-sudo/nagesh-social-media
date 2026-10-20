@@ -10,6 +10,9 @@ coverage/
 android/app/release.keystore
 android/local.properties
 android/keystore.properties
+android/key.properties
+android/upload-keystore.jks
+**/*.jks
 my-release-key.jks
 my-release-key-base64.txt
 !.env.example

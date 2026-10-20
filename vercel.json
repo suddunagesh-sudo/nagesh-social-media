@@ -4,7 +4,15 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/privacy",
+      "destination": "/privacy-policy.html"
+    },
+    {
       "source": "/admin-payouts",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]

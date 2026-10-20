@@ -33,6 +33,7 @@ export type PostComment = {
   content: string
   userId: string
   userName: string
+  avatarUrl: string | null
   createdAt: string
 }
 
@@ -234,7 +235,7 @@ async function fetchCommentsByPost(postIds: (number | string)[]): Promise<Map<st
     .map((comment) => comment.user_id)
     .filter((userId): userId is string => typeof userId === 'string'))]
   const { data: profiles, error: profilesError } = userIds.length
-    ? await supabase.from('profiles').select('id, full_name, username').in('id', userIds)
+    ? await supabase.from('profiles').select('id, full_name, username, avatar_url').in('id', userIds)
     : { data: [], error: null }
   if (profilesError) throw profilesError
 
@@ -251,6 +252,7 @@ async function fetchCommentsByPost(postIds: (number | string)[]): Promise<Map<st
       content: typeof comment.content === 'string' ? comment.content : '',
       userId,
       userName: profilesById.get(userId) ?? 'Unknown User',
+      avatarUrl: profiles?.find((profile) => profile.id === userId)?.avatar_url ?? null,
       createdAt: typeof comment.created_at === 'string' ? comment.created_at : '',
     })
     commentsByPost.set(postId, postComments)
@@ -637,17 +639,30 @@ export async function createPost(
   return mapPost(data as Record<string, unknown>)
 }
 
-export async function addCommentToPost(postId: number | string, content: string): Promise<void> {
+export async function addCommentToPost(postId: number | string, content: string): Promise<PostComment> {
   const { data: authData, error: authError } = await supabase.auth.getUser()
   if (authError) throw authError
   if (!authData.user) throw new Error('Sign in to comment.')
 
-  const { error } = await supabase.from('comments').insert({
+  const { data, error } = await supabase.from('comments').insert({
     post_id: postId,
     user_id: authData.user.id,
     content,
-  })
+  }).select('id, post_id, user_id, content, created_at').single()
   if (error) throw error
+
+  return {
+    id: data.id,
+    content: data.content,
+    userId: data.user_id,
+    userName: typeof authData.user.user_metadata?.full_name === 'string'
+      ? authData.user.user_metadata.full_name
+      : authData.user.email?.split('@')[0] ?? 'You',
+    avatarUrl: typeof authData.user.user_metadata?.avatar_url === 'string'
+      ? authData.user.user_metadata.avatar_url
+      : null,
+    createdAt: data.created_at,
+  }
 }
 
 export async function reportPostForModeration(postId: number | string, reason = 'spam'): Promise<void> {
@@ -704,23 +719,33 @@ export async function updatePostContent(postId: number | string, content: string
 export async function setPostLiked(postId: number | string, isLiked: boolean): Promise<void> {
   const { data: authData, error: authError } = await supabase.auth.getUser()
   if (authError) throw authError
-  if (!authData.user) throw new Error('Sign in to like posts.')
+  const user = authData.user
+  if (!user) throw new Error('Login again')
 
   if (isLiked) {
     const { error } = await supabase
       .from('likes')
       .delete()
       .eq('post_id', postId)
-      .eq('user_id', authData.user.id)
+      .eq('user_id', user.id)
     if (error) throw error
   } else {
+    console.log('Inserting like:', { post_id_type: typeof postId, post_id: postId })
     const { error } = await supabase
       .from('likes')
-      .upsert({
-        user_id: authData.user.id,
+      .insert({
         post_id: postId,
-      }, { onConflict: 'post_id,user_id', ignoreDuplicates: true })
-    if (error) throw error
+        user_id: user.id,
+      })
+    if (error) {
+      console.error('Like insert failed:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      })
+      if (error.code !== '23505') throw error
+    }
   }
 }
 

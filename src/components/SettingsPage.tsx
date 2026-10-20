@@ -195,10 +195,12 @@ export default function SettingsPage({ profileName, email, userId, onSaveName, o
     try {
       const { data: updatedSettings, error } = await supabase
         .from('user_settings')
-        .update({ [preferenceColumns[key]]: value })
-        .eq('user_id', userId)
+          .upsert({
+            user_id: userId,
+            [preferenceColumns[key]]: value,
+          }, { onConflict: 'user_id' })
         .select('user_id')
-        .maybeSingle()
+          .single()
       if (error) throw error
       if (!updatedSettings) throw new Error('Your settings row could not be updated.')
       setPreferences((current) => ({ ...current, [key]: value }))
@@ -283,7 +285,7 @@ export default function SettingsPage({ profileName, email, userId, onSaveName, o
 
       <Section icon={<Eye size={19} />} title="About" description="Nagesh Social">
         <div className="flex justify-between py-4 text-sm"><span className="font-semibold text-slate-800">App version</span><span className="text-slate-500">1.0.0</span></div>
-        <div className="flex gap-5 py-4 text-sm"><a href="/terms" className="font-semibold text-teal-800 hover:underline">Terms</a><a href="/privacy-policy.html" className="font-semibold text-teal-800 hover:underline">Privacy</a></div>
+        <div className="flex gap-5 py-4 text-sm"><a href="/terms" className="font-semibold text-teal-800 hover:underline">Terms</a><a href="/privacy" className="font-semibold text-teal-800 hover:underline">Privacy</a></div>
       </Section>
       {status && <p role="status" className="rounded-lg bg-slate-900 px-4 py-3 text-sm text-white">{status}</p>}
     </section>

@@ -7,7 +7,6 @@ import {
   fetchAccountWallet,
   fetchCurrentUserLikes,
   fetchProfileById,
-  fetchPostComments,
   fetchPostLikeCount,
   fetchPostEarnings,
   fetchNotifications,
@@ -27,16 +26,15 @@ import {
   supabaseConfigured,
   updatePostContent,
   uploadAvatar,
-  uploadPostPhoto,
-  uploadStoryMedia,
   type PublicProfile,
   type AccountWallet,
   type PayoutRequest,
+  type PostComment,
   type SocialPost,
   type SocialNotification,
   type SupabaseStory,
 } from './lib/supabase'
-import { initializeAdMob } from './ads'
+import { initializeAdMob, showBanner, trackPageView } from './ads'
 import AdBanner from './components/AdBanner'
 import AdEarn from './components/AdEarn'
 import AdminPayouts from './components/AdminPayouts'
@@ -184,15 +182,22 @@ function PostCard({
   onCopyLink: (post: Post) => void
   onLike: (postId: number | string) => void
   onSave: (postId: number | string) => void
-  onComment: (postId: number | string, comment: string) => void
+  onComment: (postId: number | string, comment: string) => Promise<void>
   onShare: (post: Post) => void
   onOpenProfile: (userId: string) => void
   isSiteOwner: boolean
 }) {
   const articleRef = useRef<HTMLElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const commentInputRef = useRef<HTMLInputElement>(null)
   const [commentDraft, setCommentDraft] = useState('')
+  const [commentSubmitting, setCommentSubmitting] = useState(false)
+  const [commentsOpen, setCommentsOpen] = useState(false)
   const [optionsOpen, setOptionsOpen] = useState(false)
+
+  useEffect(() => {
+    if (commentsOpen) commentInputRef.current?.focus()
+  }, [commentsOpen])
 
   useEffect(() => {
     const article = articleRef.current
@@ -295,27 +300,39 @@ function PostCard({
 
       <div className="mx-5 flex items-center justify-between border-b border-slate-100 pb-3 text-xs text-slate-500">
         <span className="flex items-center gap-1.5"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-teal-600 text-white"><ThumbsUp size={11} fill="currentColor" /></span>{post.likes.toLocaleString()} likes</span>
-        <span>{post.comments?.length ? `${post.comments.length} comments` : 'No comments yet'}</span>
+        <span>{post.comments?.length ?? 0} Comments</span>
       </div>
       <div className="grid grid-cols-4 gap-1 px-3 py-2">
         <button type="button" onClick={() => onLike(post.id)} disabled={isLikePending} aria-pressed={isLiked} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70 ${isLiked ? 'text-rose-600' : 'text-slate-600'}`}><ThumbsUp size={17} fill={isLiked ? 'currentColor' : 'none'} /> {isLiked ? 'Liked' : 'Like'}</button>
-        <button type="button" onClick={() => document.getElementById(`comment-${post.id}`)?.focus()} className="flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold text-slate-600 transition hover:bg-slate-50"><MessageCircle size={17} /> Comment</button>
+        <button type="button" onClick={() => setCommentsOpen((open) => !open)} aria-expanded={commentsOpen} aria-controls={`comments-${post.id}`} className="flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold text-slate-600 transition hover:bg-slate-50"><MessageCircle size={17} /> Comment</button>
         <button type="button" onClick={() => onShare(post)} className="flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold text-slate-600 transition hover:bg-slate-50"><Share2 size={17} /> Share</button>
         <button type="button" onClick={() => onSave(post.id)} aria-label={isSaved ? 'Remove saved post' : 'Save post'} title={isSaved ? 'Remove saved post' : 'Save post'} className={`flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold transition hover:bg-slate-50 ${isSaved ? 'text-teal-700' : 'text-slate-600'}`}><Bookmark size={17} fill={isSaved ? 'currentColor' : 'none'} /><span className="hidden sm:inline">Save</span></button>
       </div>
-      <div className="border-t border-slate-100 px-4 py-3">
-        {(post.comments ?? []).map((comment) => <p key={comment.id} className="mb-2 text-sm text-slate-700"><span className="font-semibold text-slate-900">{comment.userName}</span> {comment.content}</p>)}
+      {commentsOpen && <div id={`comments-${post.id}`} className="border-t border-slate-100 px-4 py-3">
         <form onSubmit={(event) => {
           event.preventDefault()
           const comment = commentDraft.trim()
-          if (!comment) return
-          onComment(post.id, comment)
-          setCommentDraft('')
+          if (!comment || commentSubmitting) return
+          setCommentSubmitting(true)
+          void onComment(post.id, comment)
+            .then(() => setCommentDraft(''))
+            .catch(() => {})
+            .finally(() => setCommentSubmitting(false))
         }} className="flex gap-2">
-          <input id={`comment-${post.id}`} value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} placeholder="Write a comment..." maxLength={300} aria-label="Write a comment" className="h-9 min-w-0 flex-1 rounded-lg bg-slate-100 px-3 text-sm outline-none focus:ring-2 focus:ring-teal-600/20" />
-          <button type="submit" disabled={!commentDraft.trim()} className="h-9 rounded-lg px-3 text-xs font-bold text-teal-800 hover:bg-teal-50 disabled:opacity-40">Send</button>
+          <input ref={commentInputRef} id={`comment-${post.id}`} value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} placeholder="Write a comment..." maxLength={300} aria-label="Write a comment" className="h-9 min-w-0 flex-1 rounded-lg bg-slate-100 px-3 text-sm outline-none focus:ring-2 focus:ring-teal-600/20" />
+          <button type="submit" disabled={!commentDraft.trim() || commentSubmitting} className="h-9 rounded-lg px-3 text-xs font-bold text-teal-800 hover:bg-teal-50 disabled:opacity-40">{commentSubmitting ? 'Saving…' : 'Send'}</button>
         </form>
-      </div>
+        <div className="mt-3 max-h-64 space-y-3 overflow-y-auto">
+          {(post.comments ?? []).map((comment) => <div key={comment.id} className="flex items-start gap-2.5">
+            <Avatar name={comment.userName} image={comment.avatarUrl ?? undefined} size="sm" />
+            <div className="min-w-0 rounded-xl bg-slate-100 px-3 py-2">
+              <p className="text-sm font-semibold text-slate-900">{comment.userName}</p>
+              <p className="whitespace-pre-wrap break-words text-sm text-slate-700">{comment.content}</p>
+              {comment.createdAt && <p className="mt-1 text-[11px] text-slate-400">{new Date(comment.createdAt).toLocaleString()}</p>}
+            </div>
+          </div>)}
+        </div>
+      </div>}
     </article>
   )
 }
@@ -430,6 +447,77 @@ function ProfilePage({
   )
 }
 
+async function uploadMediaWithProgress(
+  file: File,
+  bucket: 'post-images' | 'stories',
+  path: string,
+  onProgress: (progress: number) => void,
+): Promise<string> {
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+  if (sessionError) throw sessionError
+  if (!session) throw new Error('Sign in to upload media.')
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim().replace(/\/+$/, '')
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+  if (!supabaseUrl || !supabaseAnonKey) throw new Error('Supabase is not configured; media cannot be uploaded.')
+
+  const fileName = `${path}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`
+  const encodedFileName = fileName.split('/').map(encodeURIComponent).join('/')
+
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('POST', `${supabaseUrl}/storage/v1/object/${bucket}/${encodedFileName}`)
+    request.setRequestHeader('apikey', supabaseAnonKey)
+    request.setRequestHeader('Authorization', `Bearer ${session.access_token}`)
+    request.setRequestHeader('cache-control', 'max-age=3600')
+    request.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    request.setRequestHeader('x-upsert', 'false')
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(Math.min(99, Math.floor((event.loaded / event.total) * 100)))
+    }
+    request.onload = () => {
+      if (request.status < 200 || request.status >= 300) {
+        let message = `Storage upload failed (${request.status}).`
+        try {
+          const response = JSON.parse(request.responseText) as { message?: string }
+          if (response.message) message = response.message
+        } catch {
+          // Keep the status-based error when the response is not JSON.
+        }
+        reject(new Error(message))
+        return
+      }
+
+      onProgress(100)
+      resolve(`${supabaseUrl}/storage/v1/object/public/${bucket}/${encodedFileName}`)
+    }
+    request.onerror = () => reject(new Error('Storage upload failed due to a network error.'))
+    request.onabort = () => reject(new Error('Storage upload was cancelled.'))
+    request.send(file)
+  })
+}
+
+async function fetchRecentStories(): Promise<SupabaseStory[]> {
+  const stories = await fetchStories()
+  if (!stories.length) return stories
+
+  const { data, error } = await supabase
+    .from('stories')
+    .select('id, created_at')
+    .in('id', stories.map((story) => story.id))
+  if (error) throw error
+
+  const createdAtById = new Map((data ?? []).map((story) => [
+    String(story.id),
+    typeof story.created_at === 'string' ? story.created_at : '',
+  ]))
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+  return stories
+    .map((story) => ({ ...story, created_at: createdAtById.get(String(story.id)) ?? '' }))
+    .filter((story) => new Date(story.created_at) >= twentyFourHoursAgo)
+}
+
 function SocialApp() {
   const [posts, setPosts] = useState<Post[]>([])
   const [stories, setStories] = useState<Story[]>([])
@@ -444,6 +532,7 @@ function SocialApp() {
   const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState('')
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [likedPosts, setLikedPosts] = useState<(number | string)[]>([])
   const [pendingLikePosts, setPendingLikePosts] = useState<(number | string)[]>([])
   const [activeStoryGroup, setActiveStoryGroup] = useState<StoryGroup | null>(null)
@@ -533,7 +622,7 @@ function SocialApp() {
       return
     }
 
-    const [followersResult, followingResult, relationshipResult] = await Promise.all([
+    const [followersResult, followingResult] = await Promise.all([
       supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', ownProfileId),
       supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', ownProfileId),
     ])
@@ -563,8 +652,12 @@ function SocialApp() {
   }, [ownProfileId, refreshFollowData])
 
   useEffect(() => {
-    void initializeAdMob()
+    void initializeAdMob().then(showBanner)
   }, [])
+
+  useEffect(() => {
+    trackPageView()
+  }, [page, isPostDetailRoute])
 
   useEffect(() => {
     const syncSettingsRoute = () => {
@@ -631,7 +724,7 @@ function SocialApp() {
       const { profile: signedInProfile, directory } = await fetchProfiles()
       setProfile(signedInProfile ?? { fullName: '', username: '', bio: '', avatarUrl: '' })
       setDirectoryProfiles(directory)
-      setStories(await fetchStories())
+      setStories(await fetchRecentStories())
       setLoginPassword('')
       setNotice('')
     } catch (error) {
@@ -869,7 +962,7 @@ function SocialApp() {
 
     const loadPublicData = async () => {
       try {
-        const loadedStories = await fetchStories()
+        const loadedStories = await fetchRecentStories()
         if (!active) return
         setStories(loadedStories)
       } catch (error) {
@@ -993,6 +1086,7 @@ function SocialApp() {
     setText('')
     setSelectedPhoto(null)
     setPhotoPreview('')
+    setUploadProgress(0)
     setUploadingPhoto(true)
 
     try {
@@ -1011,9 +1105,9 @@ function SocialApp() {
         const mediaFile = isVideo ? sourcePhoto : await compressPhoto(sourcePhoto)
         if (!mediaFile) throw new Error('Could not process the selected media.')
         if (isVideo) {
-          videoUrl = await uploadPostPhoto(mediaFile)
+          videoUrl = await uploadMediaWithProgress(mediaFile, 'post-images', 'posts', setUploadProgress)
         } else {
-          imageUrl = await uploadPostPhoto(mediaFile)
+          imageUrl = await uploadMediaWithProgress(mediaFile, 'post-images', 'posts', setUploadProgress)
         }
       }
 
@@ -1029,6 +1123,7 @@ function SocialApp() {
       setNotice(error instanceof Error ? error.message : 'Post could not be saved to Supabase.')
     } finally {
       setUploadingPhoto(false)
+      setUploadProgress(0)
     }
   }
 
@@ -1136,23 +1231,11 @@ function SocialApp() {
     pendingLikePostIdsRef.current.add(id)
     setPendingLikePosts((pending) => [...pending, id])
     const likeDelta = alreadyLiked ? -1 : 1
-    setLikedPosts((currentLikes) => alreadyLiked
-      ? currentLikes.filter((likedId) => String(likedId) !== String(id))
-      : [...currentLikes.filter((likedId) => String(likedId) !== String(id)), id])
-    setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
-      ? { ...currentPost, likes: Math.max(0, currentPost.likes + likeDelta) }
-      : currentPost))
 
     try {
       await setPostLiked(id, alreadyLiked)
     } catch (error) {
       console.error('Your like could not be saved to the likes table:', error)
-      setLikedPosts((currentLikes) => alreadyLiked
-        ? [...currentLikes.filter((likedId) => String(likedId) !== String(id)), id]
-        : currentLikes.filter((likedId) => String(likedId) !== String(id)))
-      setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
-        ? { ...currentPost, likes: Math.max(0, currentPost.likes - likeDelta) }
-        : currentPost))
       setNotice(error instanceof Error
         ? error.message
         : 'Your like could not be saved.')
@@ -1161,6 +1244,13 @@ function SocialApp() {
       pendingLikePostIdsRef.current.delete(id)
       setPendingLikePosts((pending) => pending.filter((pendingId) => pendingId !== id))
     }
+
+    setLikedPosts((currentLikes) => alreadyLiked
+      ? currentLikes.filter((likedId) => String(likedId) !== String(id))
+      : [...currentLikes.filter((likedId) => String(likedId) !== String(id)), id])
+    setPosts((currentPosts) => currentPosts.map((currentPost) => currentPost.id === id
+      ? { ...currentPost, likes: Math.max(0, currentPost.likes + likeDelta) }
+      : currentPost))
 
     try {
       const likes = await fetchPostLikeCount(id)
@@ -1178,38 +1268,35 @@ function SocialApp() {
         await createNotification({ recipientId: post.user_id, postId: id, type: 'like' })
       } catch (notificationError) {
         console.error('Like notification could not be sent:', notificationError)
-        setNotice('Your like was saved, but the post owner was not notified.')
+        console.log('Your like was saved, but the post owner was not notified.')
       }
     }
   }
 
   const addComment = async (postId: number | string, comment: string) => {
+    let savedComment: PostComment
     try {
-      await addCommentToPost(postId, comment)
-      const comments = await fetchPostComments(postId)
+      savedComment = await addCommentToPost(postId, comment)
       setPosts((currentPosts) => currentPosts.map((post) => post.id === postId
-        ? { ...post, comments }
+        ? { ...post, comments: [...(post.comments ?? []), savedComment] }
         : post))
-      const post = posts.find((currentPost) => currentPost.id === postId)
-      await refreshPostEarnings(postId, post?.user_id ?? null)
-      let notificationFailed = false
-      if (post?.user_id) {
-        try {
-          await createNotification({
-            recipientId: post.user_id,
-            postId,
-            type: 'comment',
-            content: comment,
-          })
-        } catch (notificationError) {
-          console.log('Comment notification unavailable:', notificationError)
-          notificationFailed = true
-        }
-      }
-      if (notificationFailed) console.error('Comment was posted, but its owner was not notified.')
     } catch (error) {
-      console.error('Comment could not be saved or refreshed:', error)
+      console.error('Comment could not be saved:', error)
       setNotice(error instanceof Error ? error.message : 'Comment could not be saved.')
+      throw error
+    }
+
+    const post = posts.find((currentPost) => currentPost.id === postId)
+    void refreshPostEarnings(postId, post?.user_id ?? null)
+    if (post?.user_id) {
+      void createNotification({
+        recipientId: post.user_id,
+        postId,
+        type: 'comment',
+        content: comment,
+      }).catch((notificationError: unknown) => {
+        console.error('Comment notification could not be sent:', notificationError)
+      })
     }
   }
 
@@ -1268,13 +1355,14 @@ function SocialApp() {
     }
 
     setUploadingStory(true)
+  setUploadProgress(0)
     try {
       const { data: authData, error: authError } = await supabase.auth.getUser()
       if (authError) throw authError
       if (!authData.user) throw new Error('Sign in to publish a story.')
       const mediaFile = isPhoto ? await compressPhoto(file) : file
       if (!mediaFile) throw new Error('Could not process the selected story photo.')
-      const mediaUrl = await uploadStoryMedia(mediaFile, authData.user.id)
+      const mediaUrl = await uploadMediaWithProgress(mediaFile, 'stories', authData.user.id, setUploadProgress)
       const mediaType = isVideo ? 'video' : 'photo'
       const story = await createStory(profile.fullName, mediaUrl, mediaType, profile.avatarUrl)
       setMyStory(story)
@@ -1285,6 +1373,7 @@ function SocialApp() {
       setNotice(error instanceof Error ? error.message : 'Story could not be uploaded.')
     } finally {
       setUploadingStory(false)
+      setUploadProgress(0)
     }
   }
 
@@ -1653,7 +1742,7 @@ function SocialApp() {
                   : <img src={myStory.image} alt="Your story" className="absolute inset-0 h-full w-full object-cover" />)}
                 <span className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-slate-900/65 to-transparent" />
                 <span className="absolute left-1/2 top-1/2 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-teal-700 text-white shadow-md transition group-hover:scale-105"><Plus size={20} /></span>
-                <span className="absolute inset-x-1 bottom-2 text-center text-xs font-bold text-white">{uploadingStory ? 'Uploading...' : 'Create story'}</span>
+                <span className="absolute inset-x-1 bottom-2 text-center text-xs font-bold text-white">{uploadingStory ? `Uploading ${uploadProgress}%` : 'Create story'}</span>
               </button>
               {storyGroups.map((group) => {
                 const story = group.stories[0]
@@ -1687,7 +1776,7 @@ function SocialApp() {
                   <button type="button" onClick={() => setText((currentText) => `${currentText}${currentText ? ' ' : ''}😊`)} className="flex h-9 items-center gap-2 rounded-lg px-2.5 text-xs font-semibold text-slate-600 transition hover:bg-amber-50 hover:text-amber-700"><Smile size={17} className="text-amber-600" /><span className="hidden sm:inline">Feeling</span></button>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-9 items-center gap-2 rounded-lg px-2.5 text-xs font-semibold text-slate-600 transition hover:bg-rose-50 hover:text-rose-700"><Camera size={17} className="text-rose-600" /><span className="hidden sm:inline">Story</span></button>
                 </div>
-                <button type="submit" disabled={uploadingPhoto || (!text.trim() && !selectedPhoto)} className="flex h-9 items-center gap-2 rounded-lg bg-teal-700 px-4 text-xs font-bold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-40"><Send size={14} /> {uploadingPhoto ? 'Uploading...' : 'Post'}</button>
+                <button type="submit" disabled={uploadingPhoto || (!text.trim() && !selectedPhoto)} className="flex h-9 items-center gap-2 rounded-lg bg-teal-700 px-4 text-xs font-bold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-40"><Send size={14} /> {uploadingPhoto ? `Uploading ${uploadProgress}%` : 'Post'}</button>
               </div>
               {photoPreview && <div className="mt-3 flex items-start gap-3 rounded-lg bg-slate-50 p-2"><img src={photoPreview} alt="Selected upload preview" className="h-20 w-20 rounded-md object-cover" /><button type="button" onClick={() => { setSelectedPhoto(null); setPhotoPreview('') }} className="text-xs font-semibold text-rose-700">Remove photo</button></div>}
               <input ref={postMediaInputRef} type="file" accept="image/*" onChange={handlePostPhotoChange} className="hidden" aria-label="Choose a post photo" />

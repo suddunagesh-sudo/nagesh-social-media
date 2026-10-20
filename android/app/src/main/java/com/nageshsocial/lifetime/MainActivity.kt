@@ -1,4 +1,4 @@
-package com.nageshsocial.media
+package com.nageshsocial.lifetime
 
 import android.os.Build
 import android.os.Bundle
