@@ -1,46 +1,15 @@
 name: build aab
-on:
-  push:
-    branches: [ main ]
-
+on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Node 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-          
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Install deps
-        run: npm ci
-
-      - name: Build web
-        run: npm run build
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'dummy' }}
-
-      - name: Sync Capacitor
-        run: npx cap sync android
-
-      - name: Build AAB Debug
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew bundleDebug --no-daemon
-
-      - name: Upload AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: nagesh-social-aab
-          path: android/app/build/outputs/bundle/debug/*.aab
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+      - uses: actions/setup-java@v5
+        with: {distribution: 'temurin', java-version: '17'}
+      - run: npm install
+      - run: cd android && chmod +x gradlew && ./gradlew bundleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with: {name: my-aab, path: android/app/build/outputs/bundle/debug/*.aab}
