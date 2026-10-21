@@ -19,12 +19,12 @@ jobs:
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
           echo "${{ secrets.ANDROID_KEY_PROPERTIES_BASE64 }}" | base64 --decode > android/key.properties
-          echo "storeFile=upload-keystore.jks" >> android/key.properties
       - name: Install deps
         run: npm install
       - name: Build Release AAB
         run: |
           cd android
+          chmod +x gradlew
           ./gradlew bundleRelease
       - name: Upload Release AAB
         uses: actions/upload-artifact@v4
